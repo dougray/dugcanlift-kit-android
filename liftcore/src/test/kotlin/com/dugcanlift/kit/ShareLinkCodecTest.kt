@@ -77,7 +77,7 @@ class ShareLinkCodecTest {
     }
     @Test fun `encodes optional client fields and foodTotals round-trip`() {
         val p = SharePayload(
-            client = ShareClient("xyz", "Pat", sex = "M", age = 32, heightIn = 72, unit = "kg"),
+            client = ShareClient("xyz", "Pat", sex = "M", age = 32, heightIn = 72.0, unit = "kg"),
             goal = null,
             startDay = "2026-01-01", endDay = "2026-01-03", exportedAtEpochSeconds = 1000,
             days = listOf(
@@ -86,10 +86,21 @@ class ShareLinkCodecTest {
                 ShareDay(2, "Test", "STRENGTH", 200.0, 10000, listOf(ShareExercise("Bench", "Barbell", emptyList())), null, null)  // exercises + optional fields
             ))
         val back = (ShareLinkCodec.decode(ShareLinkCodec.encodeFragment(p)) as ShareDecodeResult.Success).payload
-        assertEquals("M", back.client.sex); assertEquals(32, back.client.age); assertEquals(72, back.client.heightIn); assertEquals("kg", back.client.unit)
+        assertEquals("M", back.client.sex); assertEquals(32, back.client.age); assertEquals(72.0, back.client.heightIn ?: 0.0, 0.0); assertEquals("kg", back.client.unit)
         assertEquals(2, back.days.size)  // First day (empty) is skipped
         assertEquals(1, back.days[0].dayOffset); assertEquals(listOf(2400.0, 150.0, 85.0, 280.0, 40.0), back.days[0].foodTotals)
         assertEquals(2, back.days[1].dayOffset); assertEquals("Test", back.days[1].sessionName); assertEquals("STRENGTH", back.days[1].focus); assertEquals(200.0, back.days[1].bodyweightLb ?: 0.0, 0.0); assertEquals(10000L, back.days[1].steps)
+    }
+    @Test fun `a fractional height round trips and is not truncated on the wire`() {
+        val p = SharePayload(
+            client = ShareClient("frac1", "Frac", heightIn = 70.5),
+            goal = null,
+            startDay = "2026-01-01", endDay = "2026-01-01", exportedAtEpochSeconds = 1000,
+            days = emptyList())
+        val json = ShareLinkCodec.buildJson(p)
+        assertEquals(70.5, json.getJSONObject("c").getDouble("h"), 0.0)
+        val back = (ShareLinkCodec.decode(ShareLinkCodec.encodeFragment(p)) as ShareDecodeResult.Success).payload
+        assertEquals(70.5, back.client.heightIn ?: 0.0, 0.0)
     }
     @Test fun `days with only steps are emitted and days with all empty fields are skipped`() {
         val p = SharePayload(

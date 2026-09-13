@@ -2,7 +2,7 @@ package com.dugcanlift.kit
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class ShareClient(val id: String, val name: String, val sex: String? = null, val age: Int? = null, val heightIn: Int? = null, val unit: String = "lb", val platform: String? = null)
+data class ShareClient(val id: String, val name: String, val sex: String? = null, val age: Int? = null, val heightIn: Double? = null, val unit: String = "lb", val platform: String? = null)
 data class ShareGoal(val calories: Int, val proteinG: Int, val fatG: Int, val carbsG: Int, val fiberG: Int)
 data class ShareSet(val weightLb: Double?, val reps: Int?, val rpe: Double?, val durationSec: Double?, val distanceMeters: Double?, val isWarmup: Boolean)
 data class ShareExercise(val name: String, val equipment: String, val sets: List<ShareSet>)
@@ -73,7 +73,7 @@ object ShareLinkCodec {
 
     private fun parse(j: JSONObject): SharePayload {
         val c = j.getJSONObject("c")
-        val client = ShareClient(c.getString("i"), c.optString("n", "Unnamed client"), c.optStringOrNull("s"), c.optIntOrNull("a"), c.optIntOrNull("h"),
+        val client = ShareClient(c.getString("i"), c.optString("n", "Unnamed client"), c.optStringOrNull("s"), c.optIntOrNull("a"), c.optDoubleOrNull("h"),
             if (c.optString("u") == "kg") "kg" else "lb", c.optStringOrNull("p"))
         val goal = j.optJSONObject("g")?.let { ShareGoal(it.optInt("c"), it.optInt("p"), it.optInt("f"), it.optInt("cb"), it.optInt("fb")) }
         val x = j.optJSONArray("x")?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList()
