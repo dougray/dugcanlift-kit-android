@@ -15,7 +15,9 @@ the build green.
 
 Both LIFT Android and Coach Android pin an **exact** version of
 `liftcore` — no dynamic or range versions. Bump deliberately in each app
-when picking up a new `liftcore` release.
+when picking up a new `liftcore` release. Releases are versioned by the
+git tag via `KIT_VERSION` (JitPack passes it as a Gradle property; a
+local publish can pass either the property or the env var).
 
 ## Coordinates
 

@@ -1,6 +1,6 @@
 plugins { alias(libs.plugins.kotlin.jvm); `maven-publish` }
 group = "com.github.dougray"
-version = System.getenv("KIT_VERSION") ?: "0.1.0-SNAPSHOT"
+version = providers.gradleProperty("KIT_VERSION").orNull ?: System.getenv("KIT_VERSION") ?: "0.1.0-SNAPSHOT"
 kotlin { jvmToolchain(17) }
 dependencies {
     // Android ships org.json in the platform; declaring it compileOnly keeps a second copy out of the apps.
