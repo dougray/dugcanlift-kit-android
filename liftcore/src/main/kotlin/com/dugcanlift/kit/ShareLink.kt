@@ -23,8 +23,11 @@ object ShareLinkCodec {
         val days = JSONArray()
         p.days.forEach { d ->
             val day = JSONObject()
-            d.sessionName?.let { day.put("n", it) }; d.focus?.let { day.put("fo", it) }
+            var any = false
             if (d.exercises.isNotEmpty()) {
+                any = true
+                d.sessionName?.takeIf { it.isNotBlank() }?.let { day.put("n", it) }
+                d.focus?.let { day.put("fo", it) }
                 val w = JSONArray()
                 d.exercises.forEach { ex ->
                     val idx = indexIn(exerciseDict, "${ex.name.trim()}|${ex.equipment.trim()}")
@@ -33,12 +36,12 @@ object ShareLinkCodec {
                 }
                 day.put("w", w)
             }
-            d.food?.let { list -> val f = JSONArray(); list.forEach { e ->
+            d.food?.let { list -> if (list.isNotEmpty()) { any = true; val f = JSONArray(); list.forEach { e ->
                 f.put(JSONArray().put(indexIn(foodDict, e.name)).put(e.servings).put(e.calories).put(e.proteinG).put(e.fatG).put(e.carbsG).put(e.fiberG).put(e.meal)) }
-                day.put("f", f) }
-            d.foodTotals?.let { t -> day.put("ft", JSONArray(t)) }
-            d.steps?.let { day.put("st", it) }; d.bodyweightLb?.let { day.put("bw", it) }
-            day.put("k", d.dayOffset); days.put(day)
+                day.put("f", f) } }
+            d.foodTotals?.let { any = true; day.put("ft", JSONArray(it)) }
+            d.steps?.let { any = true; day.put("st", it) }; d.bodyweightLb?.let { any = true; day.put("bw", it) }
+            if (any) { day.put("k", d.dayOffset); days.put(day) }
         }
         val c = JSONObject().put("i", p.client.id).put("n", p.client.name.ifBlank { "A LIFT user" }).put("u", p.client.unit)
         p.client.platform?.let { c.put("p", it) }; p.client.sex?.let { c.put("s", it) }; p.client.age?.let { c.put("a", it) }; p.client.heightIn?.let { c.put("h", it) }
