@@ -1,6 +1,6 @@
 [versions]
 kotlin = "2.2.10"
-json = "20240303"
+json = "20260814"
 junit = "4.13.2"
 [libraries]
 json = { group = "org.json", name = "json", version.ref = "json" }
