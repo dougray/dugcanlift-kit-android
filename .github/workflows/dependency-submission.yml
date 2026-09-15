@@ -1,0 +1,28 @@
+name: Dependency submission
+
+# Resolves the Gradle dependency graph and submits it to GitHub, which is
+# what makes Dependabot alerts and dependency-review.yml see Gradle
+# dependencies at all: GitHub cannot read a Gradle build on its own.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # the submission API
+
+jobs:
+  submit:
+    name: Submit the Gradle dependency graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/dependency-submission@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
