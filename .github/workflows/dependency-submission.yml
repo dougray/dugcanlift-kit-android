@@ -25,4 +25,8 @@ jobs:
           java-version: 21
 
       - uses: gradle/actions/dependency-submission@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          # Only what a consumer of the library gets; the Kotlin Gradle
+          # plugin and the rest of the build classpath are not part of it.
+          dependency-graph-include-configurations: 'runtimeClasspath'
 
