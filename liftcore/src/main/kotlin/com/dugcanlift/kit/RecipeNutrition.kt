@@ -15,13 +15,26 @@ data class RecipeNutrition(
     val fatG: Double = 0.0,
     val fiberG: Double = 0.0,
     /** True when derived by an LLM rather than a food database. Show it. */
-    val estimated: Boolean = false
+    val estimated: Boolean = false,
+    /**
+     * Tracked and shown, never targeted. Null is "not known", never zero, and stays null through
+     * [scaled]. Placed after [estimated] so every existing positional call still compiles.
+     */
+    val saturatedFatG: Double? = null,
+    val sugarG: Double? = null,
+    val sodiumMg: Double? = null
 ) {
+    /** The three as one value, the shape `fe` and `ux` carry. */
+    val details: NutrientDetails get() = NutrientDetails(saturatedFatG, sugarG, sodiumMg)
+
     fun scaled(factor: Double) = copy(
         calories = calories * factor,
         proteinG = proteinG * factor,
         carbsG = carbsG * factor,
         fatG = fatG * factor,
-        fiberG = fiberG * factor
+        fiberG = fiberG * factor,
+        saturatedFatG = saturatedFatG?.let { it * factor },
+        sugarG = sugarG?.let { it * factor },
+        sodiumMg = sodiumMg?.let { it * factor }
     )
 }
