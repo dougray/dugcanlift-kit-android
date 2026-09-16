@@ -24,7 +24,7 @@ import org.json.JSONObject
  * ### Saturated fat, sugar and sodium
  *
  * Read as of 1.4.0, into [RecipeNutrition]'s optional fields: sugar and sodium
- * by the iOS rules exactly, including sodium's unit check. Saturated fat
+ * by the iOS rules, including sodium's unit check. Saturated fat
  * (`saturatedFatContent`) is read here as well, the same way as every other
  * gram quantity; the iOS copy does not read it yet.
  */
@@ -299,18 +299,23 @@ object RecipeJsonLd {
     /**
      * Sodium is the one field published in two units — "320 mg" on most sites,
      * "0.32 g" on a few European ones. A gram value read as milligrams would be
-     * wrong by a thousand, so the unit is checked rather than assumed. A bare
-     * number is milligrams. Matches the iOS rule character for character: "mg"
-     * anywhere wins, then any "g".
+     * wrong by a thousand, so the unit is checked rather than assumed.
+     * Milligrams ("mg", "milligram(s)") are checked first, then grams ("g",
+     * "gram(s)"); a bare number is milligrams. Units match as whole words,
+     * ignoring case, so "320 milligrams" is not read as grams for containing a
+     * "g". The iOS reader follows the same rule.
      */
     private fun sodiumMilligrams(any: Any?): Double? {
         val raw = text(any) ?: return null
         val value = firstNumber(raw) ?: return null
-        val lowered = raw.lowercase()
-        if (lowered.contains("mg")) return value
-        if (lowered.contains("g")) return value * 1000
+        if (MILLIGRAMS.containsMatchIn(raw)) return value
+        if (GRAMS.containsMatchIn(raw)) return value * 1000
         return value
     }
+
+    // A digit may sit right against the unit ("320mg"); a letter may not.
+    private val MILLIGRAMS = Regex("(?<![a-z])(mg|milligrams?)(?![a-z])", RegexOption.IGNORE_CASE)
+    private val GRAMS = Regex("(?<![a-z])(g|grams?)(?![a-z])", RegexOption.IGNORE_CASE)
 
     private fun quantity(any: Any?): Double? {
         numeric(any)?.let { return it }

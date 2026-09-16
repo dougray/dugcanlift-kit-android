@@ -259,7 +259,13 @@ class RecipeJsonLdTest {
         fun sodium(value: String) = RecipeJsonLd.recipeFromJson(
             """{"@type":"Recipe","name":"X","nutrition":{"calories":350,"sodiumContent":$value}}"""
         )!!.nutritionPerServing!!.sodiumMg
+        assertEquals(320.0, sodium("\"320 mg\"")!!, 1e-9)
+        assertEquals(320.0, sodium("\"320 milligrams\"")!!, 1e-9)
+        assertEquals(1.0, sodium("\"1 Milligram\"")!!, 1e-9)
         assertEquals(320.0, sodium("\"0.32 g\"")!!, 1e-9)
+        assertEquals(320.0, sodium("\"0.32 grams\"")!!, 1e-9)
+        assertEquals(1000.0, sodium("\"1 Gram\"")!!, 1e-9)
+        assertEquals(320.0, sodium("\"0.32g\"")!!, 1e-9)
         assertEquals(1200.0, sodium("\"1.2 G\"")!!, 1e-9)
         assertEquals(320.0, sodium("\"320 MG\"")!!, 1e-9)
         assertEquals(1500.0, sodium("\"1,500mg\"")!!, 1e-9)
