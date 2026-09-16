@@ -12,7 +12,12 @@ holding domain logic shared between the two apps:
   lifter's training/nutrition data, encoded by LIFT (Android, iOS, or the
   web app) and decoded by Coach. `ShareClient`/`ShareGoal`/`ShareDay`/
   `ShareExercise`/`ShareFood`/`SharePayload`/`ShareDecodeResult` are the
-  typed payload shapes.
+  typed payload shapes, plus the optional outdoor parts `ShareOutdoor` (a
+  day's `o`), `ShareOutdoorBest` (`ob`) and `ShareLastRoute` (`lr`).
+- **`OutdoorShare`** (`OutdoorShare.kt`) — builds those outdoor parts from
+  `OutdoorShareActivity` values: day tuples, all-time bests, the trimmed and
+  thinned last route, and the encoded polyline. Pinned to fixtures LIFT web's
+  `outdoor.js` wrote; never regenerate them from this code.
 - **`PlanLinkCodec`** (`PlanLink.kt`) — the PLAN-FORMAT link codec for
   workout plans (`PlanSet`, `PlanWorkoutExercise`, …).
 - **`CompactEncoding`** — the one envelope both codecs above sit on: raw
