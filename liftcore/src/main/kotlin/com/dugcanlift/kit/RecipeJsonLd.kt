@@ -21,14 +21,12 @@ import org.json.JSONObject
  * claim, not a measurement, so it arrives flagged as estimated and nothing here
  * is ever auto-logged.
  *
- * ### One deliberate difference from iOS
+ * ### Saturated fat, sugar and sodium
  *
- * The iOS `NutritionFacts` carries sugar and sodium; [RecipeNutrition] here
- * does not. Those two fields are **dropped** rather than added to the shared
- * model, because [RecipeNutrition] is used by the shipped Android apps and
- * widening it is a data-shape change for all of them. Nothing downstream reads
- * sugar or sodium today. If that changes, add the fields deliberately rather
- * than discovering the gap here.
+ * Read as of 1.4.0, into [RecipeNutrition]'s optional fields: sugar and sodium
+ * by the iOS rules, including sodium's unit check. Saturated fat
+ * (`saturatedFatContent`) is read here as well, the same way as every other
+ * gram quantity; the iOS copy does not read it yet.
  */
 object RecipeJsonLd {
 
@@ -291,9 +289,33 @@ object RecipeJsonLd {
             fiberG = quantity(node.opt("fiberContent")) ?: 0.0,
             // The publisher's claim, not a figure resolved against the food
             // database. Every screen that shows it must say so.
-            estimated = true
+            estimated = true,
+            saturatedFatG = quantity(node.opt("saturatedFatContent")),
+            sugarG = quantity(node.opt("sugarContent")),
+            sodiumMg = sodiumMilligrams(node.opt("sodiumContent"))
         )
     }
+
+    /**
+     * Sodium is the one field published in two units — "320 mg" on most sites,
+     * "0.32 g" on a few European ones. A gram value read as milligrams would be
+     * wrong by a thousand, so the unit is checked rather than assumed.
+     * Milligrams ("mg", "milligram(s)") are checked first, then grams ("g",
+     * "gram(s)"); a bare number is milligrams. Units match as whole words,
+     * ignoring case, so "320 milligrams" is not read as grams for containing a
+     * "g". The iOS reader follows the same rule.
+     */
+    private fun sodiumMilligrams(any: Any?): Double? {
+        val raw = text(any) ?: return null
+        val value = firstNumber(raw) ?: return null
+        if (MILLIGRAMS.containsMatchIn(raw)) return value
+        if (GRAMS.containsMatchIn(raw)) return value * 1000
+        return value
+    }
+
+    // A digit may sit right against the unit ("320mg"); a letter may not.
+    private val MILLIGRAMS = Regex("(?<![a-z])(mg|milligrams?)(?![a-z])", RegexOption.IGNORE_CASE)
+    private val GRAMS = Regex("(?<![a-z])(g|grams?)(?![a-z])", RegexOption.IGNORE_CASE)
 
     private fun quantity(any: Any?): Double? {
         numeric(any)?.let { return it }

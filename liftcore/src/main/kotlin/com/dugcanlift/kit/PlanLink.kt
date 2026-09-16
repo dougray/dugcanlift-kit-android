@@ -28,7 +28,13 @@ data class PlanRecipe(
     val servings: Double,
     val nutritionPerServing: RecipeNutrition? = null,
     val ingredients: List<String> = emptyList(),
-    val steps: List<String> = emptyList()
+    val steps: List<String> = emptyList(),
+    /**
+     * The wire's `ux`, per serving; null when the plan sent none. Separate from [nutritionPerServing]
+     * because `ux` travels without `u` when the coach entered no macros. When both arrived,
+     * [nutritionPerServing] carries the same three values too.
+     */
+    val nutrientDetailsPerServing: NutrientDetails? = null
 )
 
 data class PlanMeal(
@@ -114,19 +120,25 @@ object PlanLinkCodec {
     private fun parsePayload(json: JSONObject, rawJson: String): PlanPayload {
         val recipes = json.optJSONArray("r").mapObjects { o ->
             val u = o.optJSONArray("u")
+            // `ux` is its own key, never more positions in `u`; a malformed one reads as null and the recipe stays.
+            val ux = o.optJSONArray("ux")?.let(NutrientDetailsWire::parse)
             val nutrition = if (u != null && u.length() >= 5) RecipeNutrition(
                 calories = u.optDouble(0, 0.0),
                 proteinG = u.optDouble(1, 0.0),
                 carbsG = u.optDouble(2, 0.0),
                 fatG = u.optDouble(3, 0.0),
-                fiberG = u.optDouble(4, 0.0)
+                fiberG = u.optDouble(4, 0.0),
+                saturatedFatG = ux?.saturatedFatG,
+                sugarG = ux?.sugarG,
+                sodiumMg = ux?.sodiumMg
             ) else null
             PlanRecipe(
                 name = o.optString("n", ""),
                 servings = o.optDouble("s", 1.0),
                 nutritionPerServing = nutrition,
                 ingredients = o.optJSONArray("i").mapStrings(),
-                steps = o.optJSONArray("t").mapStrings()
+                steps = o.optJSONArray("t").mapStrings(),
+                nutrientDetailsPerServing = ux
             )
         }
 

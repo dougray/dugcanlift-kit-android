@@ -244,6 +244,49 @@ class RecipeJsonLdTest {
     }
 
     @Test
+    fun `reads saturated fat, sugar and sodium`() {
+        val macros = RecipeJsonLd.recipeFromJson(
+            """{"@type":"Recipe","name":"X","nutrition":{"calories":"350",
+              "saturatedFatContent":"4.5 g","sugarContent":"9 grams","sodiumContent":"320 mg"}}"""
+        )!!.nutritionPerServing!!
+        assertEquals(4.5, macros.saturatedFatG!!, 1e-9)
+        assertEquals(9.0, macros.sugarG!!, 1e-9)
+        assertEquals(320.0, macros.sodiumMg!!, 1e-9)
+    }
+
+    @Test
+    fun `sodium in grams becomes milligrams`() {
+        fun sodium(value: String) = RecipeJsonLd.recipeFromJson(
+            """{"@type":"Recipe","name":"X","nutrition":{"calories":350,"sodiumContent":$value}}"""
+        )!!.nutritionPerServing!!.sodiumMg
+        assertEquals(320.0, sodium("\"320 mg\"")!!, 1e-9)
+        assertEquals(320.0, sodium("\"320 milligrams\"")!!, 1e-9)
+        assertEquals(1.0, sodium("\"1 Milligram\"")!!, 1e-9)
+        assertEquals(320.0, sodium("\"0.32 g\"")!!, 1e-9)
+        assertEquals(320.0, sodium("\"0.32 grams\"")!!, 1e-9)
+        assertEquals(1000.0, sodium("\"1 Gram\"")!!, 1e-9)
+        assertEquals(320.0, sodium("\"0.32g\"")!!, 1e-9)
+        assertEquals(1200.0, sodium("\"1.2 G\"")!!, 1e-9)
+        assertEquals(320.0, sodium("\"320 MG\"")!!, 1e-9)
+        assertEquals(1500.0, sodium("\"1,500mg\"")!!, 1e-9)
+        // No unit, as a string or a bare number, is milligrams.
+        assertEquals(320.0, sodium("\"320\"")!!, 1e-9)
+        assertEquals(320.0, sodium("320")!!, 1e-9)
+        assertNull(sodium("\"some\""))
+        assertNull(sodium("true"))
+    }
+
+    @Test
+    fun `absent saturated fat, sugar and sodium stay null, never zero`() {
+        val macros = RecipeJsonLd.recipeFromJson(
+            """{"@type":"Recipe","name":"X","nutrition":{"calories":"350","fatContent":"15 g"}}"""
+        )!!.nutritionPerServing!!
+        assertNull(macros.saturatedFatG)
+        assertNull(macros.sugarG)
+        assertNull(macros.sodiumMg)
+    }
+
+    @Test
     fun `nutrition without calories is dropped`() {
         val found = RecipeJsonLd.recipeFromJson(
             """{"@type":"Recipe","name":"X","nutrition":{"proteinContent":"12 g"}}"""

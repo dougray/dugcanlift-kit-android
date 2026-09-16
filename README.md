@@ -18,6 +18,20 @@ holding domain logic shared between the two apps:
   `OutdoorShareActivity` values: day tuples, all-time bests, the trimmed and
   thinned last route, and the encoded polyline. Pinned to fixtures LIFT web's
   `outdoor.js` wrote; never regenerate them from this code.
+- **`NutrientDetails`** / **`ShareNutrients`** (`NutrientDetails.kt`, 1.4.0) —
+  saturated fat, sugar and sodium: tracked and shown, never targeted.
+  `ShareFood.details` is a food's `fe` entry and `ShareDay.nutrientTotals`
+  (`ShareNutrientTotals`) is the day's `fx`, both optional trailing parameters
+  so older call sites compile and older payloads round-trip unchanged.
+  `ShareNutrients.dayTotals` builds `fx` from a day's foods (per serving ×
+  servings, totals only over known values, with counts) and `itemRow` builds
+  an `fe` entry with trailing nulls trimmed. Grams to one decimal, sodium to
+  whole mg, half-up (`Math.round`). A malformed `fx`/`fe` decodes as null
+  without failing the payload; an `fe` whose length disagrees with `f` is
+  ignored rather than misaligned. `PlanRecipe.nutrientDetailsPerServing` is a
+  plan recipe's `ux`, and `RecipeNutrition` carries the same three as
+  optional fields, read from schema.org JSON-LD by `RecipeJsonLd` (sodium
+  published in grams becomes milligrams).
 - **`PlanLinkCodec`** (`PlanLink.kt`) — the PLAN-FORMAT link codec for
   workout plans (`PlanSet`, `PlanWorkoutExercise`, …).
 - **`CompactEncoding`** — the one envelope both codecs above sit on: raw

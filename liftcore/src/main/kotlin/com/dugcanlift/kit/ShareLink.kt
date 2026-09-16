@@ -6,14 +6,17 @@ data class ShareClient(val id: String, val name: String, val sex: String? = null
 data class ShareGoal(val calories: Int, val proteinG: Int, val fatG: Int, val carbsG: Int, val fiberG: Int)
 data class ShareSet(val weightLb: Double?, val reps: Int?, val rpe: Double?, val durationSec: Double?, val distanceMeters: Double?, val isWarmup: Boolean)
 data class ShareExercise(val name: String, val equipment: String, val sets: List<ShareSet>)
-data class ShareFood(val name: String, val servings: Double, val calories: Double, val proteinG: Double, val fatG: Double, val carbsG: Double, val fiberG: Double, val meal: Int)
+/** Macros are per serving, as the wire's `f` carries them. [details] is this food's `fe` entry, also per serving; null when it recorded none of the three. */
+data class ShareFood(val name: String, val servings: Double, val calories: Double, val proteinG: Double, val fatG: Double, val carbsG: Double, val fiberG: Double, val meal: Int,
+    val details: NutrientDetails? = null)
 /** One `o` tuple: a finished run, walk or hike. `type` is 0 run, 1 walk, 2 hike; every number is whole, 0 when nothing was measured. */
 data class ShareOutdoor(val type: Int, val durationSec: Long, val distanceMeters: Long, val climbMeters: Long)
 /** One `ob` entry, all-time. A null best is "nothing to show", never zero. */
 data class ShareOutdoorBest(val type: Int, val count: Int, val farthestMeters: Long?, val longestSec: Long?, val fastestSecPerKm: Long?)
 /** `lr`: the four numbers are the whole activity; the polyline is trimmed and thinned (see [OutdoorShare.lastRoute]). */
 data class ShareLastRoute(val type: Int, val startedAtEpochSec: Long, val durationSec: Long, val distanceMeters: Long, val climbMeters: Long, val polyline: String)
-data class ShareDay(val dayOffset: Int, val sessionName: String?, val focus: String?, val bodyweightLb: Double?, val steps: Long?, val exercises: List<ShareExercise>, val foodTotals: List<Double>?, val food: List<ShareFood>?, val outdoor: List<ShareOutdoor>? = null)
+data class ShareDay(val dayOffset: Int, val sessionName: String?, val focus: String?, val bodyweightLb: Double?, val steps: Long?, val exercises: List<ShareExercise>, val foodTotals: List<Double>?, val food: List<ShareFood>?, val outdoor: List<ShareOutdoor>? = null,
+    val nutrientTotals: ShareNutrientTotals? = null)
 data class SharePayload(val client: ShareClient, val goal: ShareGoal?, val startDay: String, val endDay: String, val exportedAtEpochSeconds: Long, val days: List<ShareDay>,
     val outdoorBests: List<ShareOutdoorBest>? = null, val lastRoute: ShareLastRoute? = null)
 sealed class ShareDecodeResult { data class Success(val payload: SharePayload) : ShareDecodeResult(); object UnsupportedVersion : ShareDecodeResult(); object MalformedPayload : ShareDecodeResult() }
@@ -24,7 +27,13 @@ object ShareLinkCodec {
 
     fun encodeFragment(p: SharePayload): String = "1z" + CompactEncoding.base64Url(CompactEncoding.deflateRaw(buildJson(p).toString().toByteArray()))
 
-    /** The JSON CoachShare.buildPayload built, over the typed payload. Dictionaries by first appearance. */
+    /**
+     * The JSON CoachShare.buildPayload built, over the typed payload. Dictionaries by first appearance.
+     *
+     * Key placement: a key added later is written next to the key it belongs with rather than at the end --
+     * `fe` straight after `f`, `fx` straight after `ft`, `o` after the food. Order carries no meaning to a
+     * decoder; it keeps a pasted payload readable against SHARE-FORMAT.md.
+     */
     fun buildJson(p: SharePayload): JSONObject {
         val exerciseDict = mutableListOf<String>(); val foodDict = mutableListOf<String>()
         val days = JSONArray()
@@ -45,8 +54,14 @@ object ShareLinkCodec {
             }
             d.food?.let { list -> if (list.isNotEmpty()) { any = true; val f = JSONArray(); list.forEach { e ->
                 f.put(JSONArray().put(indexIn(foodDict, e.name)).put(e.servings).put(e.calories).put(e.proteinG).put(e.fatG).put(e.carbsG).put(e.fiberG).put(e.meal)) }
-                day.put("f", f) } }
+                day.put("f", f)
+                // `fe` only ever rides alongside `f`, one entry per `f` entry, and is left out when no food recorded any of the three.
+                val rows = list.map { NutrientDetailsWire.row(it.details) }
+                if (rows.any { it != null }) { val fe = JSONArray(); rows.forEach { r -> fe.put(r?.let(NutrientDetailsWire::tuple) ?: JSONObject.NULL) }; day.put("fe", fe) }
+            } }
             d.foodTotals?.let { any = true; day.put("ft", JSONArray(it)) }
+            d.nutrientTotals?.let { t -> any = true; day.put("fx", JSONArray().put(t.saturatedFatG ?: JSONObject.NULL).put(t.sugarG ?: JSONObject.NULL).put(t.sodiumMg ?: JSONObject.NULL)
+                .put(t.foods).put(t.withSaturatedFat).put(t.withSugar).put(t.withSodium)) }
             // A day holding only an outdoor activity is still a day.
             d.outdoor?.let { list -> if (list.isNotEmpty()) { any = true; val o = JSONArray()
                 list.forEach { a -> o.put(JSONArray().put(a.type).put(a.durationSec).put(a.distanceMeters).put(a.climbMeters)) }
@@ -105,13 +120,19 @@ object ShareLinkCodec {
             val (name, equipment) = x[idx].split('|', limit = 2).let { it[0] to it.getOrElse(1) { "" } }
             val sets = pair.optJSONArray(1)?.let { s -> (0 until s.length()).map { parseSet(s.getJSONArray(it)) } } ?: emptyList()
             ShareExercise(name, equipment, sets) } } ?: emptyList()
-        val food = d.optJSONArray("f")?.let { f -> (0 until f.length()).mapNotNull { i ->
+        // `fe` is aligned with `f` by position, so it is matched against the raw `f` index before any bad `f` entry is dropped.
+        // A length that disagrees with `f` could pin sodium on the wrong food, so the whole `fe` is ignored instead.
+        val fRaw = d.optJSONArray("f")
+        val fe = d.optJSONArray("fe")?.takeIf { fRaw != null && it.length() == fRaw.length() }
+        val food = fRaw?.let { f -> (0 until f.length()).mapNotNull { i ->
             val t = f.getJSONArray(i); if (t.length() < 8) return@mapNotNull null
             val idx = t.optInt(0, -1); if (idx !in fd.indices) return@mapNotNull null
-            ShareFood(fd[idx], t.optDouble(1, 1.0), t.optDouble(2), t.optDouble(3), t.optDouble(4), t.optDouble(5), t.optDouble(6), t.optInt(7)) } }
+            ShareFood(fd[idx], t.optDouble(1, 1.0), t.optDouble(2), t.optDouble(3), t.optDouble(4), t.optDouble(5), t.optDouble(6), t.optInt(7),
+                fe?.optJSONArray(i)?.let(NutrientDetailsWire::parse)) } }
         val ft = d.optJSONArray("ft")?.takeIf { it.length() == 5 }?.let { a -> List(5) { a.optDouble(it) } }
         val o = d.optJSONArray("o")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONArray(it)?.let(::parseOutdoor) } }?.takeIf { it.isNotEmpty() }
-        return ShareDay(d.optInt("k", 0), d.optStringOrNull("n"), d.optStringOrNull("fo"), d.optDoubleOrNull("bw"), d.optLongOrNull("st"), exercises, ft, food, o)
+        val fx = d.optJSONArray("fx")?.let(::parseNutrientTotals)
+        return ShareDay(d.optInt("k", 0), d.optStringOrNull("n"), d.optStringOrNull("fo"), d.optDoubleOrNull("bw"), d.optLongOrNull("st"), exercises, ft, food, o, fx)
     }
 
     // Outdoor parts arrived without a version bump, so a malformed one is dropped on its own -- never the whole payload.
@@ -128,6 +149,13 @@ object ShareLinkCodec {
         val n = List(5) { t.wholeOrNull(it) ?: return null }
         val polyline = t.opt(5) as? String ?: return null
         return ShareLastRoute(n[0].toInt(), n[1], n[2], n[3], n[4], polyline)
+    }
+    // `fx` arrived the same way: a malformed one reads as null and the day keeps its food.
+    private fun parseNutrientTotals(t: JSONArray): ShareNutrientTotals? {
+        if (t.length() < 7) return null
+        val totals = List(3) { i -> if (t.isNull(i)) null else ((t.opt(i) as? Number)?.toDouble()?.takeIf { it.isFinite() } ?: return null) }
+        val counts = List(4) { i -> t.wholeOrNull(3 + i)?.takeIf { it in 0..Int.MAX_VALUE }?.toInt() ?: return null }
+        return ShareNutrientTotals(totals[0], totals[1], totals[2], counts[0], counts[1], counts[2], counts[3])
     }
     /** A finite number at `i`, rounded; null for a missing, null or non-numeric slot. */
     private fun JSONArray.wholeOrNull(i: Int): Long? = (opt(i) as? Number)?.toDouble()?.takeIf { it.isFinite() }?.let { Math.round(it) }
