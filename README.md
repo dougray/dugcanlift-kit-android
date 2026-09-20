@@ -14,6 +14,16 @@ holding domain logic shared between the two apps:
   `ShareExercise`/`ShareFood`/`SharePayload`/`ShareDecodeResult` are the
   typed payload shapes, plus the optional outdoor parts `ShareOutdoor` (a
   day's `o`), `ShareOutdoorBest` (`ob`) and `ShareLastRoute` (`lr`).
+- **`ShareSide`** (`ShareLink.kt`, 1.5.0) — which limb a set was performed
+  with, as SHARE-FORMAT's set tuple carries it: **flags bits 1-2**, `0` both,
+  `1` left, `2` right, beside bit 0's warmup flag. `ShareSet.side` is optional
+  and trailing, and null means both — which is what every set written before
+  per-limb tracking means, so nothing has to be guessed at. No new tuple
+  position, so a decoder that knows nothing of sides still reads the weight,
+  the reps and the volume; a both-sided set still encodes 0 flags and still has
+  them trimmed away, so a log with no per-limb sets is byte for byte the link
+  this codec wrote at 1.4.0. Bits 1-2 holding `3` — a value this format does
+  not define — decodes as both rather than as an invented side.
 - **`OutdoorShare`** (`OutdoorShare.kt`) — builds those outdoor parts from
   `OutdoorShareActivity` values: day tuples, all-time bests, the trimmed and
   thinned last route, and the encoded polyline. Pinned to fixtures LIFT web's

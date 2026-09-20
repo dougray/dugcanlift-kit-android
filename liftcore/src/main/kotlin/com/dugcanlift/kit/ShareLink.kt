@@ -4,7 +4,18 @@ import org.json.JSONObject
 
 data class ShareClient(val id: String, val name: String, val sex: String? = null, val age: Int? = null, val heightIn: Double? = null, val unit: String = "lb", val platform: String? = null)
 data class ShareGoal(val calories: Int, val proteinG: Int, val fatG: Int, val carbsG: Int, val fiberG: Int)
-data class ShareSet(val weightLb: Double?, val reps: Int?, val rpe: Double?, val durationSec: Double?, val distanceMeters: Double?, val isWarmup: Boolean)
+/**
+ * Which limb a set was performed with. Null is "both", which is what every set
+ * written before per-limb tracking means, so absence never has to be guessed at.
+ *
+ * [wire] is the value of the set tuple's flags bits 1-2 (SHARE-FORMAT): 0 both,
+ * 1 left, 2 right, beside bit 0's warmup flag.
+ */
+enum class ShareSide(val wire: Int) { LEFT(1), RIGHT(2) }
+
+/** [side] is optional and trailing so every call site written before it still compiles, and null still means both. */
+data class ShareSet(val weightLb: Double?, val reps: Int?, val rpe: Double?, val durationSec: Double?, val distanceMeters: Double?, val isWarmup: Boolean,
+    val side: ShareSide? = null)
 data class ShareExercise(val name: String, val equipment: String, val sets: List<ShareSet>)
 /** Macros are per serving, as the wire's `f` carries them. [details] is this food's `fe` entry, also per serving; null when it recorded none of the three. */
 data class ShareFood(val name: String, val servings: Double, val calories: Double, val proteinG: Double, val fatG: Double, val carbsG: Double, val fiberG: Double, val meal: Int,
@@ -81,12 +92,20 @@ object ShareLinkCodec {
         return root
     }
 
-    /** [weight, reps, rpe, seconds, metres, flags], trailing nulls AND a trailing 0 flags dropped -- CoachShare's exact rule. */
+    /**
+     * [weight, reps, rpe, seconds, metres, flags], trailing nulls AND a trailing 0 flags dropped -- CoachShare's exact rule.
+     *
+     * flags is bit 0 warmup, bits 1-2 the side. A both-sided working set is still
+     * 0 and still trimmed away, so a link carrying no per-limb sets is byte for
+     * byte the link this encoder wrote before sides existed.
+     */
     private fun setTuple(s: ShareSet): JSONArray {
-        val values = mutableListOf<Any?>(s.weightLb, s.reps, s.rpe, s.durationSec, s.distanceMeters, if (s.isWarmup) 1 else 0)
+        val values = mutableListOf<Any?>(s.weightLb, s.reps, s.rpe, s.durationSec, s.distanceMeters, setFlags(s))
         while (values.isNotEmpty() && (values.last() == null || values.last() == 0)) values.removeAt(values.size - 1)
         val a = JSONArray(); values.forEach { a.put(it ?: JSONObject.NULL) }; return a
     }
+    internal fun setFlags(s: ShareSet): Int = (if (s.isWarmup) 1 else 0) or ((s.side?.wire ?: 0) shl 1)
+
     private fun indexIn(dict: MutableList<String>, v: String): Int { val at = dict.indexOf(v); if (at >= 0) return at; dict.add(v); return dict.size - 1 }
 
     fun decode(fragment: String): ShareDecodeResult {
@@ -164,7 +183,19 @@ object ShareLinkCodec {
     private fun parseSet(a: JSONArray): ShareSet {
         fun dbl(i: Int) = if (i < a.length() && !a.isNull(i)) a.optDouble(i) else null
         fun int(i: Int) = if (i < a.length() && !a.isNull(i)) a.optInt(i) else null
-        return ShareSet(dbl(0), int(1), dbl(2), dbl(3), dbl(4), ((int(5) ?: 0) and 1) == 1)
+        val flags = int(5) ?: 0
+        return ShareSet(dbl(0), int(1), dbl(2), dbl(3), dbl(4), (flags and 1) == 1, sideOf(flags))
+    }
+
+    /**
+     * Bits 1-2 of a set's flags. 0 is both, and so is 3 -- an unassigned pair of
+     * bits a newer writer might use for something else must read as "both", not
+     * as a side this decoder invented.
+     */
+    internal fun sideOf(flags: Int): ShareSide? = when ((flags shr 1) and 3) {
+        1 -> ShareSide.LEFT
+        2 -> ShareSide.RIGHT
+        else -> null
     }
 
     private fun JSONObject.optStringOrNull(k: String) = if (isNull(k)) null else optString(k, "").takeIf { it.isNotEmpty() }
