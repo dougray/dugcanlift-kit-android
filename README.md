@@ -44,6 +44,14 @@ holding domain logic shared between the two apps:
   published in grams becomes milligrams).
 - **`PlanLinkCodec`** (`PlanLink.kt`) — the PLAN-FORMAT link codec for
   workout plans (`PlanSet`, `PlanWorkoutExercise`, …).
+  PLAN-FORMAT "Sides" (1.6.0): `PlanWorkoutExercise.eachSide` is an
+  exercise's `b: 1` (every set done on both sides; anything but `1` is
+  false), and `PlanSet.side` is a set's sixth tuple position, SHARE-FORMAT's
+  flags byte read as `ShareLinkCodec` reads it — bits 1-2 masked, `3` both,
+  bit 0 ignored, missing or junk both. Both optional and trailing, so every
+  call site and every plan written before them is unchanged. Decode only:
+  the Coach apps own their encoders. `PlanSidesTest` reads
+  `fixtures/web-plan-per-side.txt`, a link Coach web's encoder wrote.
 - **`CompactEncoding`** — the one envelope both codecs above sit on: raw
   DEFLATE (no zlib wrapper) plus base64url. If you need a third wire codec,
   it goes on this envelope too rather than inventing another one.
