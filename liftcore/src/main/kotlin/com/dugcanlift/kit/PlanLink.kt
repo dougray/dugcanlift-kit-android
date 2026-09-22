@@ -3,19 +3,35 @@ package com.dugcanlift.kit
 import org.json.JSONArray
 import org.json.JSONObject
 
+/**
+ * One prescribed set: `[weightLb, reps, rpe, durationSec, distanceMeters, flags]`.
+ *
+ * [side] is PLAN-FORMAT "Sides" rule 2 -- a set the coach put on one side only, done on that side
+ * once. It is the sixth tuple position, SHARE-FORMAT's flags byte, read the way [ShareLinkCodec]
+ * reads a logged set's: bits 1-2 masked, never compared, `3` in them is both. Optional and
+ * trailing, so every call site written before it compiles, and null means both -- what every set
+ * written before sides means.
+ */
 data class PlanSet(
     val weightLb: Double? = null,
     val reps: Int? = null,
     val rpe: Double? = null,
     val durationSec: Int? = null,
-    val distanceMeters: Double? = null
+    val distanceMeters: Double? = null,
+    val side: ShareSide? = null
 )
 
+/**
+ * [eachSide] is PLAN-FORMAT "Sides" rule 1, the exercise's `b: 1`: every prescribed set is done on
+ * both sides, so three sets each side stay three [sets]. Anything but `1` -- absent, `0`, junk --
+ * is false, today's meaning.
+ */
 data class PlanWorkoutExercise(
     val name: String,
     val equipment: String = "",
     val note: String = "",
-    val sets: List<PlanSet> = emptyList()
+    val sets: List<PlanSet> = emptyList(),
+    val eachSide: Boolean = false
 )
 
 data class PlanWorkout(
@@ -160,7 +176,8 @@ object PlanLinkCodec {
                     name = eo.optString("n", ""),
                     equipment = eo.optString("q", ""),
                     note = eo.optString("c", ""),
-                    sets = sets
+                    sets = sets,
+                    eachSide = eo.optDouble("b", 0.0) == 1.0
                 )
             }
             PlanWorkout(name = o.optString("n", ""), exercises = exercises)
@@ -181,8 +198,10 @@ object PlanLinkCodec {
     }
 
     /**
-     * `[weightLb, reps, rpe, durationSec, distanceMeters]`, trailing nulls trimmed, any prefix may be
-     * null. Lenient: a wrong-typed entry reads as null rather than throwing and losing the whole set.
+     * `[weightLb, reps, rpe, durationSec, distanceMeters, flags]`, trailing nulls trimmed, any prefix
+     * may be null. Lenient: a wrong-typed entry reads as null rather than throwing and losing the
+     * whole set, and a missing or junk `flags` is both. Only bits 1-2 of `flags` mean anything here;
+     * bit 0 (SHARE-FORMAT's warmup) is ignored, not a reason to drop the side.
      */
     private fun parseSet(array: JSONArray): PlanSet {
         fun d(i: Int): Double? {
@@ -196,7 +215,8 @@ object PlanLinkCodec {
             reps = n(1),
             rpe = d(2),
             durationSec = n(3),
-            distanceMeters = d(4)
+            distanceMeters = d(4),
+            side = d(5)?.toInt()?.let(ShareLinkCodec::sideOf)
         )
     }
 }
