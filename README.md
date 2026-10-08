@@ -62,8 +62,10 @@ holding domain logic shared between the two apps:
   source every app's theme colors wrap rather than resampling screenshots.
   `DclPaletteTest` checks it against `palette.json`, a byte-for-byte copy of
   the iOS kit's fixture, so a token that drifts from `LiftCore.Theme` fails
-  the build. Rust text uses `ACCENT_TEXT`, not `ACCENT`; the KDoc has the
-  Material role map.
+  the build. Rust text uses `ACCENT_TEXT`, not `ACCENT`; sage text uses
+  `ACCENT2_TEXT` (`879585` dark, `56664F` light), not `ACCENT2`, whose dark
+  `7C8B7A` is 4.40:1 on `SURFACE`. `ACCENT`/`ACCENT2` stay for fills and
+  lines. The KDoc has the Material role map.
 - **`IngredientParser`** / **`RecipeIngredient`** / **`RecipeNutrition`** —
   recipe/ingredient parsing and macro types, mirrored against the iOS and
   web parsers (all three must agree on the same input line).

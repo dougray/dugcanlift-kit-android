@@ -7,6 +7,7 @@
     "accentText":      { "android": "ACCENT_TEXT", "light": "B23C25", "dark": "E0674D" },
     "accentMuted":     { "android": "ACCENT_MUTED","light": "E7B3A6", "dark": "883223" },
     "accentSecondary": { "android": "ACCENT2",     "light": "56664F", "dark": "7C8B7A" },
+    "accentSecondaryText": { "android": "ACCENT2_TEXT", "light": "56664F", "dark": "879585" },
     "onAccent":        { "android": "ON_ACCENT",   "light": "FFFAF3", "dark": "F7F1E8" },
     "textPrimary":     { "android": "TEXT",        "light": "26221E", "dark": "EDE7DD" },
     "textSecondary":   { "android": "MUTED",       "light": "665E52", "dark": "A39C8E" },
@@ -17,6 +18,7 @@
     ["textPrimary", "background"], ["textPrimary", "surface"],
     ["textSecondary", "background"], ["textSecondary", "surface"],
     ["accentText", "background"], ["accentText", "surface"],
+    ["accentSecondaryText", "background"], ["accentSecondaryText", "surface"],
     ["onAccent", "accent"]
   ]
 }
