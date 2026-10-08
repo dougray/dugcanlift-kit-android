@@ -1,0 +1,22 @@
+{
+  "_comment": "Canonical DUGCANLIFT palette. LiftCore.Theme (iOS) is the source; this file is copied byte-for-byte into dugcanlift-kit-android's liftcore/src/test/resources/fixtures/palette.json. ThemeTests and DclPaletteTest both check every token against it, and each test also compares the two copies when the sibling checkout is present. Hex is RRGGBB; null means clear.",
+  "tokens": {
+    "background":      { "android": "BG",          "light": "F4EFE7", "dark": "1C1B19" },
+    "surface":         { "android": "SURFACE",     "light": "FFFCF7", "dark": "242220" },
+    "accent":          { "android": "ACCENT",      "light": "B23C25", "dark": "C1442C" },
+    "accentText":      { "android": "ACCENT_TEXT", "light": "B23C25", "dark": "E0674D" },
+    "accentMuted":     { "android": "ACCENT_MUTED","light": "E7B3A6", "dark": "883223" },
+    "accentSecondary": { "android": "ACCENT2",     "light": "56664F", "dark": "7C8B7A" },
+    "onAccent":        { "android": "ON_ACCENT",   "light": "FFFAF3", "dark": "F7F1E8" },
+    "textPrimary":     { "android": "TEXT",        "light": "26221E", "dark": "EDE7DD" },
+    "textSecondary":   { "android": "MUTED",       "light": "665E52", "dark": "A39C8E" },
+    "hairline":        { "android": "RULE",        "light": "DCD3C5", "dark": "3A3733" },
+    "cardBorder":      { "android": "CARD_BORDER", "light": "DCD3C5", "dark": null }
+  },
+  "textPairs": [
+    ["textPrimary", "background"], ["textPrimary", "surface"],
+    ["textSecondary", "background"], ["textSecondary", "surface"],
+    ["accentText", "background"], ["accentText", "surface"],
+    ["onAccent", "accent"]
+  ]
+}

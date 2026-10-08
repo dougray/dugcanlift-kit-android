@@ -60,6 +60,10 @@ holding domain logic shared between the two apps:
   fall-back).
 - **`DclPalette`** — the DUGCANLIFT palette as ARGB constants, the one
   source every app's theme colors wrap rather than resampling screenshots.
+  `DclPaletteTest` checks it against `palette.json`, a byte-for-byte copy of
+  the iOS kit's fixture, so a token that drifts from `LiftCore.Theme` fails
+  the build. Rust text uses `ACCENT_TEXT`, not `ACCENT`; the KDoc has the
+  Material role map.
 - **`IngredientParser`** / **`RecipeIngredient`** / **`RecipeNutrition`** —
   recipe/ingredient parsing and macro types, mirrored against the iOS and
   web parsers (all three must agree on the same input line).

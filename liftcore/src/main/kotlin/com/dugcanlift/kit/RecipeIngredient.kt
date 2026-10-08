@@ -21,7 +21,13 @@ data class RecipeIngredient(
     val displayText: String
         get() {
             val name = item?.takeIf { it.isNotBlank() } ?: return rawText
-            val amount = listOfNotNull(qty?.trimZeros(), unit).joinToString(" ")
+            // A digit run too long for a Double parses to infinity; the
+            // person's own words beat "Infinity g oats".
+            if (qty != null && !qty.isFinite()) return rawText
+            // The count sentinel is a grouping key, not a unit: "2 eggs", never
+            // "2 \u0000count eggs". Same rule as iOS's displayText.
+            val printedUnit = unit?.takeUnless { it == IngredientParser.COUNT_UNIT }
+            val amount = listOfNotNull(qty?.trimZeros(), printedUnit).joinToString(" ")
             return if (amount.isBlank()) name else "$amount $name"
         }
 }
