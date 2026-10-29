@@ -59,8 +59,29 @@ object IngredientParser {
         "liter" to "l", "liters" to "l", "litre" to "l", "litres" to "l"
     )
 
+    /**
+     * Every whitespace character, written out rather than left to
+     * [Char.isWhitespace]: U+0009-U+000D, U+0020, U+00A0, U+1680,
+     * U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF
+     * (JavaScript's `\s`). Before parsing, each one becomes a plain space, so
+     * a non-breaking space or a tab pasted from a recipe page splits words like
+     * a space does. [RecipeIngredient.rawText] keeps the line as it was. The
+     * same set, character for character, is in all four parsers.
+     */
+    private fun isListedWhitespace(c: Char): Boolean = when (c.code) {
+        in 0x09..0x0D, 0x20, 0xA0, 0x1680, in 0x2000..0x200A,
+        0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF -> true
+        else -> false
+    }
+
+    /** The line with every character in the listed set replaced by U+0020. */
+    internal fun normalizeWhitespace(raw: String): String =
+        buildString(raw.length) { raw.forEach { append(if (isListedWhitespace(it)) ' ' else it) } }
+
     fun parse(raw: String): RecipeIngredient {
-        val reader = Reader(raw)
+        // Every trim below is of plain spaces only: the line is already
+        // normalized, and trim() would also strip U+001C-U+001F.
+        val reader = Reader(normalizeWhitespace(raw))
         val quantity = reader.takeQuantity()
             ?: return RecipeIngredient(rawText = raw)
 
@@ -74,9 +95,9 @@ object IngredientParser {
         val item: String
         if (known != null) {
             unit = known
-            item = remainder.substringAfter(' ', "").trim()
+            item = remainder.substringAfter(' ', "").trim(' ')
         } else {
-            item = remainder.trim()
+            item = remainder.trim(' ')
         }
 
         if (item.isEmpty()) return RecipeIngredient(rawText = raw)
@@ -92,9 +113,9 @@ object IngredientParser {
 
     /** Reads a leading number, including "1/2" and "1 1/2". */
     private class Reader(text: String) {
-        private var s = text.trimStart()
+        private var s = text.trimStart(' ')
 
-        fun rest(): String = s.trimStart()
+        fun rest(): String = s.trimStart(' ')
 
         private fun takeNumber(): Double? {
             val digits = s.takeWhile { it.isDigit() || it == '.' }
@@ -130,7 +151,7 @@ object IngredientParser {
                 }
             }
 
-            s = s.trimStart()
+            s = s.trimStart(' ')
             return value
         }
     }

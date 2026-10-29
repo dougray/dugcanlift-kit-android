@@ -171,4 +171,74 @@ class IngredientParserTest {
             assertEquals(line, IngredientParser.COUNT_UNIT, IngredientParser.parse(line).unit)
         }
     }
+
+    // Whitespace
+
+    /**
+     * Every whitespace character in the line becomes a plain space before
+     * parsing: U+0009-U+000D, U+0020, U+00A0, U+1680, U+2000-U+200A, U+2028,
+     * U+2029, U+202F, U+205F, U+3000, U+FEFF. The same cases are in the other
+     * three parsers' suites.
+     */
+    private val whitespaceCases = listOf(
+        Case("1.5\u00A0pounds ground beef", 1.5, "lb", "ground beef"), // NBSP between number and unit
+        Case("2 cups\u00A0rice", 2.0, "cups", "rice"), // NBSP between unit and item
+        Case("1 lb\u00A0ground\u00A0beef", 1.0, "lb", "ground beef"), // the item comes out with plain spaces
+        Case("2\tcups rice", 2.0, "cups", "rice"), // tab between number and unit
+        Case("\t2 cups rice", 2.0, "cups", "rice"), // a leading tab
+        Case("250\u202Fg flour", 250.0, "g", "flour"), // U+202F narrow no-break space
+        Case("1\u00A01/2 cups flour", 1.5, "cups", "flour"), // "1 1/2" with an NBSP
+        Case("\uFEFF400 g chicken thigh", 400.0, "g", "chicken thigh"), // a byte-order mark
+    )
+
+    private val whitespaceSet = listOf(
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20, 0xA0, 0x1680,
+        0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A,
+        0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF,
+    )
+
+    @Test
+    fun `whitespace of every kind splits words like a space`() {
+        for (c in whitespaceCases) {
+            val parsed = IngredientParser.parse(c.line)
+            assertEquals(c.line, c.qty, parsed.qty!!, 0.0)
+            assertEquals(c.line, c.unit, parsed.unit)
+            assertEquals(c.line, c.item, parsed.item)
+        }
+    }
+
+    @Test
+    fun `every character in the set is a space wherever it falls`() {
+        for (code in whitespaceSet) {
+            val ws = code.toChar().toString()
+            val hex = code.toString(16)
+            val parsed = IngredientParser.parse("${ws}2${ws}1/2${ws}cups${ws}basmati${ws}rice${ws}")
+            assertEquals(hex, 2.5, parsed.qty!!, 0.0)
+            assertEquals(hex, "cups", parsed.unit)
+            assertEquals(hex, "basmati rice", parsed.item)
+        }
+    }
+
+    /**
+     * U+200B zero-width space, U+001C file separator and U+0085 next line are
+     * not in the set, so "cups" never becomes a unit through them.
+     */
+    @Test
+    fun `a character outside the set is not a space`() {
+        for (ws in listOf("\u200B", "\u001C", "\u0085")) {
+            val parsed = IngredientParser.parse("2${ws}cups rice")
+            val hex = ws[0].code.toString(16)
+            assertEquals(hex, IngredientParser.COUNT_UNIT, parsed.unit)
+            assertEquals(hex, "${ws}cups rice", parsed.item)
+        }
+    }
+
+    @Test
+    fun `rawText keeps the line byte for byte`() {
+        val lines = whitespaceCases.map { it.line } + "\u3000salt\u00A0to taste\t"
+        for (line in lines) {
+            assertTrue(line, IngredientParser.parse(line).rawText.toByteArray(Charsets.UTF_8)
+                .contentEquals(line.toByteArray(Charsets.UTF_8)))
+        }
+    }
 }

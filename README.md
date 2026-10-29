@@ -76,7 +76,14 @@ holding domain logic shared between the two apps:
   `l`, and so on), so grouping and the count sentinel follow unchanged and no
   line that parsed before parses differently. Not read: `fl oz`, a bare `t`
   or `T`, `c.`, `pt`, `qt`, `stick`. This kit has no per-unit costing; its
-  `grams` is set for `g` alone, spelled out or not.
+  `grams` is set for `g` alone, spelled out or not. Whitespace (1.9.1): every
+  whitespace character in a line becomes a plain space before parsing, from
+  one set written out in the code — U+0009–U+000D, U+0020, U+00A0, U+1680,
+  U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF, JavaScript's
+  `\s` — rather than `Char.isWhitespace`, so a non-breaking space between the
+  unit and the item splits them, and U+001C–U+001F are no longer trimmed as
+  whitespace. `rawText` keeps the line exactly as given; the item comes out
+  with plain spaces.
 - **`Format`** — `Double.trimZeros()`, the one shared numeric-display rule.
 
 Everything here stays boring and is covered by its own tests in
