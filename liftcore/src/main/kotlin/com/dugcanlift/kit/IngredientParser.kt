@@ -34,6 +34,31 @@ object IngredientParser {
         "can", "cans", "pinch", "handful"
     )
 
+    /**
+     * Unit words spelled out, as US recipe sites write them ("1.5 pounds
+     * ground beef"), each stored as the abbreviation in [UNITS]. Storing the
+     * abbreviation is the whole design: costing, shopping-list grouping and
+     * [COUNT_UNIT] already key on it, so a spelled-out line behaves exactly
+     * like its abbreviated twin and nothing downstream changes.
+     *
+     * The same table, word for word, is in the iOS kit's
+     * `IngredientParser.swift`, Coach web's `coach/parser.js` and LIFT web's
+     * `app.js`. Deliberately not here: `fl oz`, a bare `t` or `T`, `c.`,
+     * `pt`, `qt`, `stick`, or anything that needs a density.
+     */
+    private val SPELLED_UNITS = mapOf(
+        "gram" to "g", "grams" to "g", "gramme" to "g", "grammes" to "g",
+        "kilogram" to "kg", "kilograms" to "kg", "kilogramme" to "kg", "kilogrammes" to "kg",
+        "kilo" to "kg", "kilos" to "kg",
+        "milligram" to "mg", "milligrams" to "mg", "milligramme" to "mg", "milligrammes" to "mg",
+        "ounce" to "oz", "ounces" to "oz",
+        "pound" to "lb", "pounds" to "lb",
+        "teaspoon" to "tsp", "teaspoons" to "tsp",
+        "tablespoon" to "tbsp", "tablespoons" to "tbsp",
+        "milliliter" to "ml", "milliliters" to "ml", "millilitre" to "ml", "millilitres" to "ml",
+        "liter" to "l", "liters" to "l", "litre" to "l", "litres" to "l"
+    )
+
     fun parse(raw: String): RecipeIngredient {
         val reader = Reader(raw)
         val quantity = reader.takeQuantity()
@@ -44,9 +69,11 @@ object IngredientParser {
         val firstWord = remainder.substringBefore(' ')
         val candidate = firstWord.lowercase().trim('.', ',')
 
+        val known = if (candidate in UNITS) candidate else SPELLED_UNITS[candidate]
+
         val item: String
-        if (candidate in UNITS) {
-            unit = candidate
+        if (known != null) {
+            unit = known
             item = remainder.substringAfter(' ', "").trim()
         } else {
             item = remainder.trim()
