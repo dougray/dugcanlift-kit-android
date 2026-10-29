@@ -83,7 +83,14 @@ holding domain logic shared between the two apps:
   `\s` — rather than `Char.isWhitespace`, so a non-breaking space between the
   unit and the item splits them, and U+001C–U+001F are no longer trimmed as
   whitespace. `rawText` keeps the line exactly as given; the item comes out
-  with plain spaces.
+  with plain spaces. Fibre (1.10.0): `RecipeNutrition.fiberG` is a `Double?`,
+  null for "not known" and never 0, as the iOS kit's `NutritionFacts.fiberG`
+  is. `RecipeJsonLd` leaves it null when a page states no `fiberContent` (it
+  wrote 0 before), it stays null through `scaled`, and `PlanLinkCodec` reads
+  `u`'s fifth number as sent -- every sender writes a number there, so a 0
+  stays 0 -- and anything that is not a number as null. A consumer writing `u`
+  must still send a number, 0 for unknown: the iOS decoders reject a null in
+  `u` and would drop the whole plan.
 - **`Format`** — `Double.trimZeros()`, the one shared numeric-display rule.
 
 Everything here stays boring and is covered by its own tests in

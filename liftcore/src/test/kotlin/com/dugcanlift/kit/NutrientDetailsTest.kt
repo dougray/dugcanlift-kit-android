@@ -159,6 +159,7 @@ class NutrientDetailsTest {
         val ux = NutrientDetailsWire.tuple(ShareNutrients.itemRow(n.details)!!).toString()
         assertEquals("[3.5,null,610]", ux)
         val r = plan("""{"v":1,"t":"plan","l":"l1","n":"C","r":[{"n":"A","s":1,"u":[400,0,0,0,0],"ux":$ux}]}""").recipes[0]
-        assertEquals(n.copy(estimated = false), r.nutritionPerServing)
+        // `u` carries a 0 for fibre, which can only be read as a stated 0.
+        assertEquals(n.copy(estimated = false, fiberG = 0.0), r.nutritionPerServing)
     }
 }
