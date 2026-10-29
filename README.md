@@ -67,8 +67,16 @@ holding domain logic shared between the two apps:
   `7C8B7A` is 4.40:1 on `SURFACE`. `ACCENT`/`ACCENT2` stay for fills and
   lines. The KDoc has the Material role map.
 - **`IngredientParser`** / **`RecipeIngredient`** / **`RecipeNutrition`** —
-  recipe/ingredient parsing and macro types, mirrored against the iOS and
-  web parsers (all three must agree on the same input line).
+  recipe/ingredient parsing and macro types, mirrored against the iOS kit's
+  parser and both web builds' (Coach web's `coach/parser.js`, LIFT web's
+  `app.js`): all four must agree on the same input line. Spelled-out units
+  (1.9.0): a unit word written out — "1.5 pounds ground beef", "2 Tablespoons",
+  "1 litre" — is read wherever its abbreviation is, in any case and with
+  `.`/`,` trimmed as before, and stored as the abbreviation (`lb`, `tbsp`,
+  `l`, and so on), so grouping and the count sentinel follow unchanged and no
+  line that parsed before parses differently. Not read: `fl oz`, a bare `t`
+  or `T`, `c.`, `pt`, `qt`, `stick`. This kit has no per-unit costing; its
+  `grams` is set for `g` alone, spelled out or not.
 - **`Format`** — `Double.trimZeros()`, the one shared numeric-display rule.
 
 Everything here stays boring and is covered by its own tests in
