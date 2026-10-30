@@ -1,6 +1,7 @@
 package com.dugcanlift.kit
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.json.JSONObject
@@ -120,5 +121,19 @@ class PlanLinkCodecTest {
         assertEquals("Second Good", payload.recipes[1].name)
         assertEquals(1, payload.meals.size)
         assertEquals(1, payload.workouts.size)
+    }
+
+    @Test
+    fun `fibre in u is read as sent, and junk there is unknown rather than zero`() {
+        fun fibre(u: String) = (PlanLinkCodec.decode(
+            encodeForTest("""{"v":1,"t":"plan","l":"l1","n":"C","r":[{"n":"A","s":1,"u":$u}]}"""),
+            expectedLifterId = "l1"
+        ) as PlanDecodeResult.Success).payload.recipes.single().nutritionPerServing?.fiberG
+        assertEquals(9.0, fibre("[438,36,31,19,9]"))
+        // Every sender writes 0 for unknown (the iOS decoders reject a null in `u`), so a sent 0
+        // can only be read as 0.
+        assertEquals(0.0, fibre("[438,36,31,19,0]"))
+        assertNull(fibre("[438,36,31,19,null]"))
+        assertNull(fibre("[438,36,31,19,\"x\"]"))
     }
 }
