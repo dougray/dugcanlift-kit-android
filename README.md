@@ -83,7 +83,17 @@ holding domain logic shared between the two apps:
   `\s` — rather than `Char.isWhitespace`, so a non-breaking space between the
   unit and the item splits them, and U+001C–U+001F are no longer trimmed as
   whitespace. `rawText` keeps the line exactly as given; the item comes out
-  with plain spaces.
+  with plain spaces. One answer for every line (1.10.0): vulgar fractions are
+  read ("½ cup", "1½ cups", "1 ½ cups"; the eighteen Unicode names a fraction
+  with, and U+2044 as `/`); a quantity must end where its number ends, so
+  "1,5 kg", "1,000 g", "1-2 cups", "1 2 eggs" and "2² cups" are not read
+  rather than read as their first number; a fraction is whole numbers, every
+  number finite; and a trailing run of `.` `,` `:` `;` is trimmed from the
+  unit word, nothing from its front, so "2 tbsp: oil" reads `tbsp` and
+  ".tbsp" is no longer a unit. All four parsers run dugcanlift-kit's
+  `data/ingredient-lines.json`, copied byte for byte with its `.sha256` to
+  `liftcore/src/test/resources/fixtures/`; never edit either here, or
+  regenerate them from this parser.
 - **`Format`** — `Double.trimZeros()`, the one shared numeric-display rule.
 
 Everything here stays boring and is covered by its own tests in

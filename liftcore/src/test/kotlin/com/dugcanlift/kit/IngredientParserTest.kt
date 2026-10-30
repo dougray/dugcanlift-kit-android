@@ -1,9 +1,14 @@
 package com.dugcanlift.kit
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
+import java.io.File
+import java.security.MessageDigest
 
 /**
  * Mirrors `IngredientParserTests` in the iOS build. The two parsers must agree:
@@ -239,6 +244,70 @@ class IngredientParserTest {
         for (line in lines) {
             assertTrue(line, IngredientParser.parse(line).rawText.toByteArray(Charsets.UTF_8)
                 .contentEquals(line.toByteArray(Charsets.UTF_8)))
+        }
+    }
+
+    // --- The shared case table ------------------------------------------
+
+    /**
+     * dugcanlift-kit's `data/ingredient-lines.json`, copied byte for byte with
+     * its `ingredient-lines.sha256`: the case table all four parsers are
+     * checked against, written by hand from the rules in that repo's
+     * `data/README.md`. Never edit either file here, and never regenerate them
+     * from this parser.
+     */
+    private fun resourceBytes(name: String) = javaClass.getResourceAsStream("/fixtures/$name")!!.readBytes()
+
+    @Test
+    fun `the case table is the kit's bytes`() {
+        val sum = String(resourceBytes("ingredient-lines.sha256"), Charsets.UTF_8).trim()
+        assertTrue("ingredient-lines.sha256 should be one bare sha256", sum.matches(Regex("[0-9a-f]{64}")))
+        val actual = MessageDigest.getInstance("SHA-256").digest(resourceBytes("ingredient-lines.json"))
+            .joinToString("") { "%02x".format(it) }
+        assertEquals(
+            "ingredient-lines.json does not match ingredient-lines.sha256. Copy dugcanlift-kit/data/" +
+                "ingredient-lines.json AND ingredient-lines.sha256 over together; the kit writes the " +
+                "checksum with node data/validate-ingredient-lines.mjs --write-checksum.",
+            sum, actual
+        )
+    }
+
+    /** When the iOS kit is checked out beside this one, the copies must be identical. */
+    @Test
+    fun `the case table matches the iOS kit's copy`() {
+        val ios = File(System.getProperty("user.dir")).resolve("../../dugcanlift-kit/data/ingredient-lines.json")
+        assumeTrue("dugcanlift-kit is not checked out beside this repo", ios.isFile)
+        assertTrue("ingredient-lines.json differs between the two kits",
+            ios.readBytes().contentEquals(resourceBytes("ingredient-lines.json")))
+    }
+
+    @Test
+    fun `every line in the shared case table`() {
+        val table = JSONObject(String(resourceBytes("ingredient-lines.json"), Charsets.UTF_8))
+        assertEquals(IngredientParser.COUNT_UNIT, table.getString("countUnit"))
+        val cases = table.getJSONArray("cases")
+        assertTrue(cases.length() > 100)
+        for (i in 0 until cases.length()) {
+            val c = cases.getJSONObject(i)
+            val line = c.getString("line")
+            val parsed = IngredientParser.parse(line)
+            assertTrue(line, parsed.rawText.toByteArray(Charsets.UTF_8).contentEquals(line.toByteArray(Charsets.UTF_8)))
+            if (c.optBoolean("unparsed")) {
+                assertNull(line, parsed.qty)
+                assertNull(line, parsed.unit)
+                assertNull(line, parsed.item)
+                assertNull(line, parsed.grams)
+                continue
+            }
+            assertNotNull(line, parsed.qty)
+            assertEquals(line, c.getDouble("qty"), parsed.qty!!, 1e-9)
+            assertEquals(line, c.getString("unit"), parsed.unit)
+            assertEquals(line, c.getString("item"), parsed.item)
+            if (c.isNull("grams")) {
+                assertNull(line, parsed.grams)
+            } else {
+                assertEquals(line, c.getDouble("grams"), parsed.grams!!, 1e-9)
+            }
         }
     }
 }
