@@ -286,7 +286,8 @@ object RecipeJsonLd {
             proteinG = quantity(node.opt("proteinContent")) ?: 0.0,
             carbsG = quantity(node.opt("carbohydrateContent")) ?: 0.0,
             fatG = quantity(node.opt("fatContent")) ?: 0.0,
-            fiberG = quantity(node.opt("fiberContent")) ?: 0.0,
+            // Unstated is unknown, never 0 g -- the iOS reader's rule (1.10.0).
+            fiberG = quantity(node.opt("fiberContent")),
             // The publisher's claim, not a figure resolved against the food
             // database. Every screen that shows it must say so.
             estimated = true,

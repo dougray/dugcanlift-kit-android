@@ -13,7 +13,13 @@ data class RecipeNutrition(
     val proteinG: Double = 0.0,
     val carbsG: Double = 0.0,
     val fatG: Double = 0.0,
-    val fiberG: Double = 0.0,
+    /**
+     * Null is "not known", never zero (1.10.0; a plain `Double` defaulting to 0 before). A recipe
+     * page, a catalogue entry or a typed form that states no fibre leaves it null, as the iOS kit's
+     * `NutritionFacts.fiberG` does, so "no fibre data" never silently becomes "0 g" in a day total.
+     * A zero that was stated stays zero. Stays null through [scaled].
+     */
+    val fiberG: Double? = null,
     /** True when derived by an LLM rather than a food database. Show it. */
     val estimated: Boolean = false,
     /**
@@ -32,7 +38,7 @@ data class RecipeNutrition(
         proteinG = proteinG * factor,
         carbsG = carbsG * factor,
         fatG = fatG * factor,
-        fiberG = fiberG * factor,
+        fiberG = fiberG?.let { it * factor },
         saturatedFatG = saturatedFatG?.let { it * factor },
         sugarG = sugarG?.let { it * factor },
         sodiumMg = sodiumMg?.let { it * factor }

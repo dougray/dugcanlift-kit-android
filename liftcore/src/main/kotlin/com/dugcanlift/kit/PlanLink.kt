@@ -143,7 +143,9 @@ object PlanLinkCodec {
                 proteinG = u.optDouble(1, 0.0),
                 carbsG = u.optDouble(2, 0.0),
                 fatG = u.optDouble(3, 0.0),
-                fiberG = u.optDouble(4, 0.0),
+                // Every sender writes a number here (`u` is five plain numbers, and the iOS
+                // decoders reject a null in it), so a sent 0 stays 0. Junk is unknown, not 0.
+                fiberG = u.optDouble(4, Double.NaN).takeIf { it.isFinite() },
                 saturatedFatG = ux?.saturatedFatG,
                 sugarG = ux?.sugarG,
                 sodiumMg = ux?.sodiumMg
