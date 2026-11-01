@@ -237,10 +237,31 @@ class RecipeJsonLdTest {
         assertEquals(12.0, macros.proteinG, 1e-9)
         assertEquals(40.0, macros.carbsG, 1e-9)
         assertEquals(15.0, macros.fatG, 1e-9)
-        assertEquals(3.0, macros.fiberG, 1e-9)
+        assertEquals(3.0, macros.fiberG!!, 1e-9)
         // The publisher's claim, never a figure resolved against the food
         // database. Every screen that shows it must say so.
         assertTrue(macros.estimated)
+    }
+
+    @Test
+    fun `fibre a page does not state is unknown, not zero`() {
+        // The iOS reader leaves `fiberG` nil here. Writing 0 made a page that never mentioned
+        // fibre read as "0 g fibre" on Android and nowhere else.
+        val macros = RecipeJsonLd.recipeFromJson(
+            """{"@type":"Recipe","name":"X","nutrition":{"calories":"350","proteinContent":"12 g"}}"""
+        )!!.nutritionPerServing!!
+        assertNull(macros.fiberG)
+        assertNull(macros.scaled(4.0).fiberG)
+        // A stated zero is a zero.
+        val zero = RecipeJsonLd.recipeFromJson(
+            """{"@type":"Recipe","name":"X","nutrition":{"calories":"350","fiberContent":"0 g"}}"""
+        )!!.nutritionPerServing!!
+        assertEquals(0.0, zero.fiberG!!, 1e-9)
+        // Junk is unknown too.
+        val junk = RecipeJsonLd.recipeFromJson(
+            """{"@type":"Recipe","name":"X","nutrition":{"calories":"350","fiberContent":"some"}}"""
+        )!!.nutritionPerServing!!
+        assertNull(junk.fiberG)
     }
 
     @Test

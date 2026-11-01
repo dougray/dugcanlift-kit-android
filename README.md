@@ -83,7 +83,15 @@ holding domain logic shared between the two apps:
   `\s` — rather than `Char.isWhitespace`, so a non-breaking space between the
   unit and the item splits them, and U+001C–U+001F are no longer trimmed as
   whitespace. `rawText` keeps the line exactly as given; the item comes out
-  with plain spaces. One answer for every line (1.10.0): vulgar fractions are
+  with plain spaces. Fiber (1.10.0): `RecipeNutrition.fiberG` is a `Double?`,
+  null for "not known" and never 0, as the iOS kit's `NutritionFacts.fiberG`
+  is. `RecipeJsonLd` leaves it null when a page states no `fiberContent` (it
+  wrote 0 before), it stays null through `scaled`, and `PlanLinkCodec` reads
+  `u`'s fifth number as sent -- every sender writes a number there, so a 0
+  stays 0 -- and anything that is not a number as null. A consumer writing `u`
+  must still send a number, 0 for unknown: the iOS decoders reject a null in
+  `u` and would drop the whole plan.
+  One answer for every line (1.10.0): vulgar fractions are
   read ("½ cup", "1½ cups", "1 ½ cups"; the eighteen Unicode names a fraction
   with, and U+2044 as `/`); a quantity must end where its number ends, so
   "1,5 kg", "1,000 g", "1-2 cups", "1 2 eggs" and "2² cups" are not read
