@@ -110,6 +110,7 @@ jobs:
           - language: java-kotlin
             build-mode: manual
             gradle-dir: .
+            gradle-task: assemble
           - language: actions
             build-mode: none
     steps:
@@ -128,7 +129,7 @@ jobs:
           queries: security-extended
       - if: matrix.build-mode == 'manual'
         working-directory: ${{ matrix.gradle-dir }}
-        run: ./gradlew --no-daemon assembleDebug
+        run: ./gradlew --no-daemon ${{ matrix.gradle-task }}
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: /language:${{ matrix.language }}
