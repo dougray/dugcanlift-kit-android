@@ -11,6 +11,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -31,6 +34,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.flow.first
 import com.dugcanlift.kit.DclPalette
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLngBounds
@@ -116,8 +120,9 @@ fun RouteMap(
     }
     val bounds = if (points.size >= 2) MapBounds.around(points) else null
     // Keyed on the bounds, not the points: the answer depends on nothing else.
+    // The gate is also read directly: the collected copy can lag behind a writer.
     val decision = remember(bounds, areas, writing) {
-        RouteMapDecision.decide(points, writing) { b -> areas.any { it.detail.intersects(b) } }
+        RouteMapDecision.decide(points, writing || store.writing.value) { b -> areas.any { it.detail.intersects(b) } }
     }
     val style = remember(decision, dark, store) {
         if (decision != RouteMapDecision.MAP) null
@@ -125,6 +130,14 @@ fun RouteMap(
     }
     if (style == null) {
         // No area covers the route, or (a build defect) the style is missing: never a blank square.
+        fallback(modifier)
+        return
+    }
+    // A writer may have raised the gate since `writing` was read; then the
+    // store refuses the open, no MapView is made, and the line is drawn until
+    // the gate comes down and the open is tried again.
+    val mapView = rememberMapView(dark, store)
+    if (mapView == null) {
         fallback(modifier)
         return
     }
@@ -138,7 +151,7 @@ fun RouteMap(
             .background(background)
             .clearAndSetSemantics { contentDescription = "Route" },
     ) {
-        StreetMap(store, points, style, revision, dark, interactive, Modifier.matchParentSize())
+        StreetMap(mapView, points, style, revision, dark, interactive, Modifier.matchParentSize())
         if (!interactive) {
             // Above the map, so the MapView never sees a touch; it consumes
             // nothing, so a tap still reaches the card that holds the map.
@@ -165,7 +178,7 @@ fun RouteMap(
 
 @Composable
 private fun StreetMap(
-    store: StreetStore,
+    mapView: MapView,
     points: List<Pair<Double, Double>>,
     style: String,
     revision: Int,
@@ -174,7 +187,6 @@ private fun StreetMap(
     modifier: Modifier,
 ) {
     val padding = RouteFitPadding.forDensity(LocalDensity.current.density)
-    val mapView = rememberMapView(dark, store)
     val controller = remember(mapView) { RouteMapController(mapView, padding) }
     AndroidView(
         factory = { mapView },
@@ -184,18 +196,31 @@ private fun StreetMap(
 }
 
 /**
- * One MapView counted open on [store] for as long as it lives: counted when it
- * is made (in composition, before any style is set) and counted closed only
- * after its `onDestroy`, so a writer waiting in `awaitMapsClosed` never writes
- * while this view could still be reading. Forgotten after the lifecycle effect
- * below is disposed (Compose forgets in reverse order), so `onPause`/`onStop`
- * come before `onDestroy`.
+ * One MapView counted open on [store] for as long as it lives: counted before
+ * it is made (in composition, before any style is set; see [open]) and counted
+ * closed only after its `onDestroy`, so a writer waiting in `awaitMapsClosed`
+ * never writes while this view could still be reading. Forgotten after the
+ * lifecycle effect below is disposed (Compose forgets in reverse order), so
+ * `onPause`/`onStop` come before `onDestroy`.
  */
-private class OpenMap(val view: MapView, private val store: StreetStore) : RememberObserver {
+private class OpenMap private constructor(val view: MapView, private val store: StreetStore) : RememberObserver {
     private var closed = false
 
-    init {
-        store.mapOpened()
+    companion object {
+        /**
+         * Counts a map open and makes its view, or returns null when the store
+         * refuses (a writer holds the gate): then no MapView is made at all.
+         */
+        fun open(store: StreetStore, make: () -> MapView): OpenMap? {
+            if (!store.mapOpened()) return null
+            val view = try {
+                make()
+            } catch (e: Throwable) {
+                store.mapClosed()
+                throw e
+            }
+            return OpenMap(view, store)
+        }
     }
 
     override fun onRemembered() {}
@@ -213,12 +238,25 @@ private class OpenMap(val view: MapView, private val store: StreetStore) : Remem
     }
 }
 
-/** A MapView whose lifecycle follows the screen's (nomad-pocket's `rememberMapView`). */
+/**
+ * A MapView whose lifecycle follows the screen's (nomad-pocket's
+ * `rememberMapView`), or null while the store refuses maps (a writer holds the
+ * gate); the open is tried again once the gate comes down.
+ */
 @Composable
-private fun rememberMapView(dark: Boolean, store: StreetStore): MapView {
+private fun rememberMapView(dark: Boolean, store: StreetStore): MapView? {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val mapView = remember(store) { OpenMap(newMapView(context, dark), store) }.view
+    var attempt by remember(store) { mutableIntStateOf(0) }
+    val open = remember(store, attempt) { OpenMap.open(store) { newMapView(context, dark) } }
+    if (open == null) {
+        LaunchedEffect(store, attempt) {
+            store.writing.first { !it }
+            attempt++
+        }
+        return null
+    }
+    val mapView = open.view
     DisposableEffect(lifecycle, mapView) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {

@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.dugcanlift.kit.DclPalette
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
@@ -144,9 +145,10 @@ internal fun StreetsSheet(
         job = scope.launch {
             try {
                 store.awaitMapsClosed()
-                // No suspension between beginning the area and remembering it,
-                // so a cancel always finds the area it must remove.
-                val id = session.areaId ?: store.beginArea(p, name).also { session.areaId = it }
+                // Off the main thread; remembered inside the same block, so a
+                // cancel arriving as it returns still finds the area.
+                val id = session.areaId
+                    ?: withContext(Dispatchers.IO) { store.beginArea(p, name).also { session.areaId = it } }
                 val area = MapDownload(store).resume(id, p) { done, total -> progressFlow.value = done to total }
                 phase = Phase.Ready
                 session.finished = true
@@ -173,7 +175,7 @@ internal fun StreetsSheet(
         store.beginWriting()
         // On the store's own scope, not this sheet's: a sheet swiped away or
         // removed while this waits must still remove the area it began.
-        store.work.launch {
+        store.work.launch(CoroutineExceptionHandler { _, e -> logWarning("Cancelling a street download failed", e) }) {
             try {
                 running?.cancelAndJoin()
                 // The download may have finished and reported while we waited.
@@ -181,7 +183,13 @@ internal fun StreetsSheet(
                 // Read after the join: the job may have begun the area while it ran.
                 val id = session.areaId
                 if (StreetsSheetRules.cancelMayDelete(mode, id, session.finished) && id != null) {
-                    runCatching { store.removeArea(id) }
+                    try {
+                        store.removeArea(id)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logWarning("Removing a cancelled street download failed", e)
+                    }
                 }
                 withContext(Dispatchers.Main) { onDone(null) }
             } finally {

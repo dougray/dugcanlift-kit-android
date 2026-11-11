@@ -5,7 +5,9 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.sqlite.execSQL
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -14,7 +16,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
-import java.io.Closeable
 import java.io.File
 import java.time.Instant
 import java.util.UUID
@@ -46,7 +47,7 @@ data class StreetArea(
  * only after the MapView's `onDestroy`. Nothing else may write, so the writing
  * calls are internal and [standard] is the only way an app gets a store.
  */
-class StreetStore internal constructor(val file: File) : Closeable {
+class StreetStore internal constructor(val file: File) {
     /** A tile was offered for an area with no `areas` row: never begun, or deleted. */
     class UnknownArea(val id: UUID) : Exception("No street area $id")
 
@@ -68,7 +69,9 @@ class StreetStore internal constructor(val file: File) : Closeable {
      * download's cleanup -- runs here, so it finishes even if the screen that
      * started it goes away while it waits for the maps.
      */
-    internal val work = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    internal val work = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> logWarning("Street map work failed", e) },
+    )
 
     private val gateLock = Any()
     private var writers = 0
@@ -86,8 +89,9 @@ class StreetStore internal constructor(val file: File) : Closeable {
      * Android this handshake is the only thing keeping them apart: this store
      * writes through androidx's bundled SQLite and MapLibre reads through its
      * own native SQLite, two libraries in one process, and POSIX file locks do
-     * not exclude each other within a process. `busy_timeout` stays as a
-     * second line of defence.
+     * not exclude each other within a process. `busy_timeout` only waits for
+     * readers that use this store's own SQLite (another process, a tool); it
+     * does nothing between this store and MapLibre.
      */
     val writing: StateFlow<Boolean> = _writing.asStateFlow()
 
@@ -97,11 +101,17 @@ class StreetStore internal constructor(val file: File) : Closeable {
      */
     val mapsOpen: StateFlow<Int> = _mapsOpen.asStateFlow()
 
-    internal fun mapOpened() {
-        synchronized(gateLock) {
-            maps += 1
-            _mapsOpen.value = maps
-        }
+    /**
+     * Counts a map open, unless a writer holds the gate: then it is refused
+     * (false), not counted, and needs no [mapClosed], and the map must not make
+     * a MapView. The check and the count share the gate's lock, so once a
+     * writer has raised the gate and seen no maps, no map can open behind it.
+     */
+    internal fun mapOpened(): Boolean = synchronized(gateLock) {
+        if (writers > 0) return false
+        maps += 1
+        _mapsOpen.value = maps
+        true
     }
 
     internal fun mapClosed() {
@@ -114,9 +124,11 @@ class StreetStore internal constructor(val file: File) : Closeable {
 
     /**
      * Waits until no map is open, or [timeoutMs] has passed, and returns either
-     * way: a map that never closes must not stop a download for ever, and the
-     * store's busy timeout is still there behind it. Call it with the gate
-     * already raised, so no new map opens while it waits.
+     * way, so a stuck map cannot stop a download for ever. After a timeout
+     * nothing keeps the writer and that map apart (`busy_timeout` cannot: the
+     * two use different SQLite libraries), which is why the timeout is only
+     * for a map that never closes, and why the on-device check matters. Call it
+     * with the gate already raised: from then on no new map can open.
      */
     suspend fun awaitMapsClosed(timeoutMs: Long = 2_000) {
         if (mapsOpen.value == 0) return
@@ -153,9 +165,10 @@ class StreetStore internal constructor(val file: File) : Closeable {
         file.parentFile?.mkdirs()
         db = BundledSQLiteDriver().open(file.path)
         try {
-            // MapLibre's tile reader holds read locks while it draws, and in
-            // DELETE mode a COMMIT needs the file to itself: wait up to 5 s for
-            // a reader to finish rather than fail with SQLITE_BUSY.
+            // In DELETE mode a COMMIT needs the file to itself: wait up to 5 s for
+            // a reader that shares this SQLite (another process, a tool) rather
+            // than fail with SQLITE_BUSY. It does nothing about MapLibre, whose
+            // own SQLite library this one cannot see; the gate handles that.
             db.prepare("PRAGMA busy_timeout = $BUSY_TIMEOUT_MS").use { it.step() }
             // MapLibre opens the file read-only; a WAL would need write access to -shm.
             db.prepare("PRAGMA journal_mode = DELETE").use { it.step() }
@@ -351,7 +364,13 @@ class StreetStore internal constructor(val file: File) : Closeable {
     /** True when any finished area's detail box touches [bounds]. Partial cover is cover. */
     fun covers(bounds: MapBounds): Boolean = areas().any { it.detail.intersects(bounds) }
 
-    override fun close() {
+    /**
+     * Closes the file and stops the store's own work. Internal: the store is
+     * one per process, shared by every screen, so no screen may close it.
+     */
+    internal fun close() {
+        synchronized(opened) { if (opened[file.path] === this) opened.remove(file.path) }
+        work.cancel()
         synchronized(lock) { db.close() }
     }
 
@@ -378,4 +397,13 @@ class StreetStore internal constructor(val file: File) : Closeable {
             return synchronized(opened) { opened.getOrPut(file.path) { StreetStore(file) } }
         }
     }
+}
+
+/**
+ * Logs without ever throwing: `android.util.Log` is a stub on the JVM in unit
+ * tests. Plain `Log`, not Timber: Timber is MapLibre's dependency, not ours.
+ */
+@android.annotation.SuppressLint("LogNotTimber")
+internal fun logWarning(message: String, e: Throwable) {
+    runCatching { android.util.Log.w("LiftMap", message, e) }
 }

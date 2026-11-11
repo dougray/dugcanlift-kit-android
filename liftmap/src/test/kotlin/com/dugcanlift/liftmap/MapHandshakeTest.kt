@@ -6,6 +6,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -182,12 +183,75 @@ class MapHandshakeTest {
 
     @Test fun theGateIsReleasedWhenARemoveFails() = runBlocking<Unit> {
         val store = makeStore()
-        store.close() // every statement now fails
+        val id = store.beginArea(plan, "A")
+        store.finishArea(id)
+        // Break the delete: its first statement now names a table that is gone.
+        val raw = androidx.sqlite.driver.bundled.BundledSQLiteDriver().open(store.file.path)
+        raw.prepare("DROP TABLE area_tiles").use { it.step() }
+        raw.close()
         try {
-            store.removeArea(UUID.randomUUID())
+            store.removeArea(id)
             fail("expected the delete to fail")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (_: Exception) {
         }
         assertFalse(store.writing.value)
+    }
+
+    // --- A map may not open once a writer has begun (the gate and the count share one lock).
+
+    @Test fun aMapOpensWhenNothingIsWriting() {
+        val store = makeStore()
+        assertTrue(store.mapOpened())
+        assertEquals(1, store.mapsOpen.value)
+        store.mapClosed()
+    }
+
+    @Test fun aMapIsRefusedWhileAWriterHoldsTheGate() {
+        val store = makeStore()
+        store.beginWriting()
+        assertFalse(store.mapOpened())
+        assertEquals("a refused open is not counted", 0, store.mapsOpen.value)
+        store.endWriting()
+        try {
+            store.mapClosed()
+            fail("a refused open needs no matching close")
+        } catch (_: IllegalStateException) {
+        }
+        assertTrue("open again once the gate is down", store.mapOpened())
+        store.mapClosed()
+    }
+
+    @Test fun aLateMapAfterTheWritersCheckIsRefused() = runBlocking<Unit> {
+        val store = makeStore()
+        store.beginWriting()
+        store.awaitMapsClosed() // the writer's check passes: no maps
+        // A RouteMap that still saw `writing == false` now tries to open.
+        assertFalse(store.mapOpened())
+        assertEquals(0, store.mapsOpen.value)
+        store.endWriting()
+    }
+
+    @Test fun noMapOpensDuringADownload() = runBlocking<Unit> {
+        val store = makeStore()
+        val opens = Collections.synchronizedList(mutableListOf<Boolean>())
+        val fake = FakeHttp()
+        fake.reset { url ->
+            opens += store.mapOpened() // a map trying to open mid-write
+            if (url.path == "/planet") FakeHttp.Reply(200, """{"tiles":["$good"]}""".toByteArray())
+            else FakeHttp.Reply(200, byteArrayOf(7))
+        }
+        MapDownload(store, fake::open).download(plan, "X")
+        assertTrue(opens.isNotEmpty())
+        assertTrue("every open during the download is refused", opens.none { it })
+        assertEquals(0, store.mapsOpen.value)
+    }
+
+    @Test fun closingTheStoreStopsItsWork() {
+        val store = makeStore()
+        assertTrue(store.work.isActive)
+        store.close()
+        assertFalse(store.work.isActive)
     }
 }

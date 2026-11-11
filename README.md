@@ -140,8 +140,13 @@ words. It draws a run over streets the person downloaded, and nothing else.
 a writer -- `MapDownload.download` / `resume`, the download sheet, and
 `StreetStore.removeArea` -- which raises the store's gate (`writing`) first,
 then waits for every open map to close (`awaitMapsClosed`: `mapsOpen` back to
-0, or 2 s, after which it goes ahead with `busy_timeout` behind it), and only
-then writes; the gate comes down in a `finally`, however the write ends.
+0, or 2 s), and only then writes; the gate comes down in a `finally`, however
+the write ends. While the gate is up a map cannot even open: the store refuses
+it under the same lock, so it draws the line and tries again when the gate
+comes down. After the 2 s timeout nothing keeps a stuck map and the writer
+apart (`busy_timeout` cannot: the two use different SQLite libraries), which
+is why the timeout is only for a map that never closes, and why the on-device
+check below matters.
 A delete and a cancelled download's cleanup run on the store's own
 long-lived scope, so leaving the screen while they wait never drops them. While
 the gate is up every `RouteMap` draws the plain line, which disposes its
