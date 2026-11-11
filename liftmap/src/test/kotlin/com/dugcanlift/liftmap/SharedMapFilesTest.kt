@@ -41,4 +41,31 @@ class SharedMapFilesTest {
             .map { it.relativeTo(root).invariantSeparatorsPath }.toList()
         for (path in here) assertTrue("$path is not the kit's", path in listed)
     }
+
+    /**
+     * MapLibre never wakes a tile waiting on a glyph range whose file is
+     * missing, so every one of the 256 ranges ships: the five with glyphs, and
+     * an empty file for each of the rest. Each is in the manifest and matches it.
+     */
+    @Test fun everyGlyphRangeShips() {
+        val sums = File(root, "map-files.sha256").readLines().filter { it.isNotEmpty() }
+            .associate { line -> line.split("  ", limit = 2).let { it[1] to it[0] } }
+        val dir = File(root, "fonts/Noto Sans Regular")
+        for (start in 0..65280 step 256) {
+            val path = "fonts/Noto Sans Regular/$start-${start + 255}.pbf"
+            val file = File(root, path)
+            assertTrue("$path is missing", file.isFile)
+            assertEquals("$path is not in the manifest or differs from it", sums[path], sha256(file))
+        }
+        assertEquals(256, dir.listFiles { f -> f.name.endsWith(".pbf") }!!.size)
+    }
+
+    @Test fun theManifestListsExactlyTheFilesHere() {
+        val listed = File(root, "map-files.sha256").readLines().filter { it.isNotEmpty() }
+            .map { it.split("  ", limit = 2)[1] }
+        val here = root.walkTopDown().filter { it.isFile && it.name != "map-files.sha256" }
+            .map { it.relativeTo(root).invariantSeparatorsPath }.toList()
+        assertEquals(here.sorted(), listed.sorted())
+        assertEquals("sorted by path", listed.sorted(), listed)
+    }
 }
