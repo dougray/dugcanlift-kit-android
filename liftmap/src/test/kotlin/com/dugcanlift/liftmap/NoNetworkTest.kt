@@ -23,6 +23,12 @@ class NoNetworkTest {
 
         val network = listOf("HttpURLConnection", "openConnection", "URL(", "HttpsURLConnection", "Socket(", "URLConnection")
         const val ALLOWED_NETWORK = "MapDownload.kt"
+
+        /** `setStyle(` handed anything but a `Style.Builder`: a URL string or a variable holding one. */
+        val styleNotBuilt = Regex("""setStyle\((?!\s*Style\.Builder)""")
+
+        /** `URL (` with whitespace before the parenthesis, which `URL(` alone would miss. */
+        val spacedUrl = Regex("""\bURL\s+\(""")
         const val ALLOWED_OKHTTP = "MapNetworkGuard.kt"
 
         fun offences(name: String, code: String): List<String> {
@@ -33,7 +39,11 @@ class NoNetworkTest {
                 if (bare.contains("openfreemap") || bare.lowercase().contains("openfreemap.org")) out += "$name: names the tile host"
             }
             if (name != ALLOWED_OKHTTP && bare.lowercase().contains("okhttp")) out += "$name: OkHttp"
-            if (bare.contains("fromUri(") || bare.contains("fromUrl(") || bare.contains("setStyle(\"")) out += "$name: style from a URL"
+            if (bare.contains("fromUri(") || bare.contains("fromUrl(") || styleNotBuilt.containsMatchIn(bare)) {
+                out += "$name: style from a URL"
+            }
+            if (name != ALLOWED_NETWORK && bare.contains("\"http")) out += "$name: http literal"
+            if (spacedUrl.containsMatchIn(bare)) out += "$name: URL ("
             if (bare.contains(".toURL(")) out += "$name: .toURL("
             if (bare.contains("OfflineManager")) out += "$name: OfflineManager"
             return out
@@ -49,7 +59,18 @@ class NoNetworkTest {
         assertEquals(listOf("A.kt: OkHttp"), offences("A.kt", "import okhttp3.OkHttpClient"))
         assertEquals(listOf("A.kt: style from a URL"), offences("A.kt", "Style.Builder().fromUri(x)"))
         assertEquals(listOf("MapDownload.kt: style from a URL"), offences("MapDownload.kt", "openConnection(); fromUri(x)"))
-        assertEquals(listOf("A.kt: style from a URL"), offences("A.kt", "map.setStyle(\"https://x/style.json\")"))
+        assertEquals(listOf("A.kt: style from a URL", "A.kt: http literal"), offences("A.kt", "map.setStyle(\"https://x/style.json\")"))
+        assertEquals(listOf("A.kt: style from a URL"), offences("A.kt", "map.setStyle(styleUrl)"))
+        assertEquals(listOf("A.kt: style from a URL"), offences("A.kt", "map.setStyle( url) { }"))
+        assertEquals(emptyList<String>(), offences("A.kt", "map.setStyle( Style.Builder().fromJson(json)) { }"))
+        assertEquals(listOf("A.kt: http literal"), offences("A.kt", "VectorSource(\"s\", \"https://tiles.example/{z}.pbf\")"))
+        assertEquals(listOf("A.kt: http literal"), offences("A.kt", "RasterSource(\"r\", \"http://x\")"))
+        assertEquals(emptyList<String>(), offences("A.kt", "val s = \"mbtiles:///data/x.mbtiles\""))
+        assertEquals(emptyList<String>(), offences("MapDownload.kt", "val u = \"https://tiles.openfreemap.org/planet\""))
+        assertEquals(listOf("A.kt: URL ("), offences("A.kt", "val u = URL (s)"))
+        assertEquals(listOf("A.kt: URL ("), offences("A.kt", "val u = URL\t(s)"))
+        assertEquals(emptyList<String>(), offences("A.kt", "val name = \"URL\"; f(name)"))
+        assertEquals(emptyList<String>(), offences("A.kt", "fun mbtilesUrl (file: File)"))
         assertEquals(emptyList<String>(), offences("A.kt", "map.setStyle(Style.Builder().fromJson(json))"))
         assertEquals(listOf("A.kt: URL(", "A.kt: .toURL("), offences("A.kt", "val u = file.toURI().toURL()"))
         assertEquals(listOf("MapDownload.kt: .toURL("), offences("MapDownload.kt", "uri.toURL()"))
