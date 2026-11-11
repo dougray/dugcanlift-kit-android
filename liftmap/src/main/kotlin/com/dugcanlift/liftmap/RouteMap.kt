@@ -73,6 +73,11 @@ const val MAP_ATTRIBUTION = StreetStore.ATTRIBUTION
  * finishes, an area is deleted) and when the route's bounds change, never on
  * every recomposition: a recording recomposes on each GPS fix.
  *
+ * **Writes pause maps.** While the store is writing (`StreetStore.writing`: a
+ * download, a resume, a delete), the line is drawn instead and the MapView is
+ * disposed, so MapLibre is not reading the file while it changes; when the
+ * write ends, the map is made again from the file as it now is.
+ *
  * The route stays the strongest thing on screen: a 5 dp accent line with round
  * caps, the start dot in the secondary accent (10 dp) and the end dot in the
  * accent (12 dp). The camera fits the whole route with 24 dp to spare (50 dp
@@ -96,14 +101,19 @@ fun RouteMap(
         return
     }
     val revision by store.revision.collectAsState()
+    // Writes pause maps: while a download or a delete writes the file, the
+    // line is drawn and the MapView disposed, so MapLibre stops reading it.
+    val writing by store.writing.collectAsState()
     val dark = isDarkTheme()
 
     // SQLite is asked only when the store changes; the bounds test is in memory.
-    val areas = remember(store, revision) { runCatching { store.areas() }.getOrDefault(emptyList()) }
+    val areas = remember(store, revision, writing) {
+        if (writing) emptyList() else runCatching { store.areas() }.getOrDefault(emptyList())
+    }
     val bounds = if (points.size >= 2) MapBounds.around(points) else null
     // Keyed on the bounds, not the points: the answer depends on nothing else.
-    val decision = remember(bounds, areas) {
-        RouteMapDecision.decide(points) { b -> areas.any { it.detail.intersects(b) } }
+    val decision = remember(bounds, areas, writing) {
+        RouteMapDecision.decide(points, writing) { b -> areas.any { it.detail.intersects(b) } }
     }
     val style = remember(decision, dark, store) {
         if (decision != RouteMapDecision.MAP) null

@@ -48,6 +48,51 @@ class StreetStore(val file: File) : Closeable {
      */
     val revision: StateFlow<Int> = _revision.asStateFlow()
 
+    private val gateLock = Any()
+    private var writers = 0
+    private val _writing = MutableStateFlow(false)
+
+    /**
+     * True while anything is writing the file: a download or a resume, from
+     * beginning its area to finishing, failing or being cancelled (cleanup
+     * included), and a [deleteArea]. **Writes pause maps**: `RouteMap` draws
+     * the plain line while this is true, which disposes its MapView so
+     * MapLibre stops reading the file, and draws the map again when it is
+     * false. On Android this is the only thing keeping them apart: this store
+     * writes through androidx's bundled SQLite and MapLibre reads through its
+     * own native SQLite, two libraries in one process, and POSIX file locks do
+     * not exclude each other within a process. `busy_timeout` stays as a
+     * second line of defence. A map only sees this gate if it uses the same
+     * store, which is why apps use [standard].
+     */
+    val writing: StateFlow<Boolean> = _writing.asStateFlow()
+
+    /** Opens the write gate; gates nest, and each must be ended by [endWriting], in a `finally`. */
+    fun beginWriting() {
+        synchronized(gateLock) {
+            writers += 1
+            _writing.value = true
+        }
+    }
+
+    fun endWriting() {
+        synchronized(gateLock) {
+            check(writers > 0) { "endWriting without beginWriting" }
+            writers -= 1
+            _writing.value = writers > 0
+        }
+    }
+
+    /** Runs [body] with the write gate held. */
+    inline fun <T> whileWriting(body: () -> T): T {
+        beginWriting()
+        try {
+            return body()
+        } finally {
+            endWriting()
+        }
+    }
+
     init {
         file.parentFile?.mkdirs()
         db = BundledSQLiteDriver().open(file.path)
@@ -213,8 +258,8 @@ class StreetStore(val file: File) : Closeable {
         )
     }
 
-    /** Deletes the area and every tile no other area still owns. */
-    fun deleteArea(id: UUID) {
+    /** Deletes the area and every tile no other area still owns, with the write gate held. */
+    fun deleteArea(id: UUID) = whileWriting {
         transaction {
             db.prepare("DELETE FROM area_tiles WHERE area_id = ?").use { it.bindText(1, key(id)); it.step() }
             db.execSQL(

@@ -127,8 +127,12 @@ internal fun StreetsSheet(
     fun start() {
         if (downloading || stopping) return
         val p = plan
+        // The write gate covers the whole session, from beginning the area to
+        // the job's end, however it ends; a cancel holds its own across cleanup.
+        store.beginWriting()
         val id = areaId ?: runCatching { store.beginArea(p, name) }.getOrNull()?.also { areaId = it }
         if (id == null) {
+            store.endWriting()
             phase = Phase.Failed
             return
         }
@@ -145,7 +149,7 @@ internal fun StreetsSheet(
             } catch (_: Exception) {
                 phase = Phase.Failed
             }
-        }
+        }.also { it.invokeOnCompletion { store.endWriting() } } // runs even if the job never starts
     }
 
     /**
@@ -158,6 +162,9 @@ internal fun StreetsSheet(
         stopping = true
         val running = job
         val id = areaId
+        // Held from before the download stops until its area is gone, so no map
+        // reopens the file in between.
+        store.beginWriting()
         scope.launch {
             running?.cancelAndJoin()
             // The download may have finished and reported while we waited.
@@ -166,7 +173,7 @@ internal fun StreetsSheet(
                 withContext(Dispatchers.IO) { runCatching { store.deleteArea(id) } }
             }
             onDone(null)
-        }
+        }.invokeOnCompletion { store.endWriting() } // runs even if the cleanup never starts
     }
 
     val sheetState = rememberModalBottomSheetState(

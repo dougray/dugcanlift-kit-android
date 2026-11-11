@@ -5,9 +5,17 @@ enum class RouteMapDecision {
     MAP, LINE;
 
     companion object {
-        /** [points] are `(latitude, longitude)`. Fewer than two is always the line. */
-        fun decide(points: List<Pair<Double, Double>>, covered: (MapBounds) -> Boolean): RouteMapDecision {
-            if (points.size < 2) return LINE
+        /**
+         * [points] are `(latitude, longitude)`. Fewer than two is always the
+         * line, and so is a store that is [writing] (`StreetStore.writing`):
+         * writes pause maps, so MapLibre never reads the file while it changes.
+         */
+        fun decide(
+            points: List<Pair<Double, Double>>,
+            writing: Boolean = false,
+            covered: (MapBounds) -> Boolean,
+        ): RouteMapDecision {
+            if (points.size < 2 || writing) return LINE
             val bounds = MapBounds.around(points) ?: return LINE
             return if (covered(bounds)) MAP else LINE
         }

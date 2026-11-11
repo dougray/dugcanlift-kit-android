@@ -136,6 +136,21 @@ words. It draws a run over streets the person downloaded, and nothing else.
   streets (or the app's own canvas, passed as `fallback`, when no area covers
   it), the Maps settings card, and the download sheet.
 
+**Writes pause maps.** While a download, a resume or a delete writes the
+store, `StreetStore.writing` is true and every `RouteMap` draws the plain line
+instead, disposing its MapView so MapLibre stops reading the file; when the
+write ends, the map is made again from the file as it now is. The gate is
+counted (writes nest) and is always released in a `finally`, including after a
+failure or a cancel. On Android the gate is load-bearing: the store writes
+through androidx's bundled SQLite and MapLibre reads through its own native
+SQLite, two different libraries in one process, and POSIX file locks do not
+exclude each other within a process, so SQLite itself keeps nothing apart
+(`busy_timeout` stays only as a second line of defence). A map sees the gate
+only if it shares the store, so apps use `StreetStore.standard(ctx)`
+everywhere. Not yet checked on a device: open a run's map, start an Update
+from the Maps card, and watch for crashes or blank tiles while it runs and
+after it finishes.
+
 `liftmap/src/main/assets/map/` holds dugcanlift-kit's styles and fonts from
 its `map/`, with the matching lines of its `map-files.sha256` (the kit's
 manifest also lists web files this module does not carry). All 256 glyph

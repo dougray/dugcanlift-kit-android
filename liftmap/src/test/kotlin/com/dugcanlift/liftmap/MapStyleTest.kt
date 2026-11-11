@@ -62,6 +62,17 @@ class RouteMapDecisionTest {
         assertEquals(RouteMapDecision.LINE, RouteMapDecision.decide(listOf(a, b)) { false })
     }
 
+    @Test fun whileTheStoreIsWritingItIsALineEvenWhenCovered() {
+        assertEquals(RouteMapDecision.LINE, RouteMapDecision.decide(listOf(a, b), writing = true) { true })
+        assertEquals(RouteMapDecision.MAP, RouteMapDecision.decide(listOf(a, b), writing = false) { true })
+    }
+
+    @Test fun whileWritingTheStoreIsNotAsked() {
+        var asked = false
+        RouteMapDecision.decide(listOf(a, b), writing = true) { asked = true; true }
+        assertEquals(false, asked)
+    }
+
     @Test fun theBoundsAskedAboutAreTheRoutes() {
         var asked: MapBounds? = null
         RouteMapDecision.decide(listOf(a, b)) { asked = it; true }
