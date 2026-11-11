@@ -108,6 +108,40 @@ Everything here stays boring and is covered by its own tests in
 `liftcore/src/test/` — a change reaches every consumer app with no way for
 any one of them to opt out.
 
+## What's in `liftmap` (1.11.0)
+
+`liftmap` is an **Android library** (AGP, Compose, MapLibre
+`android-sdk-opengl` 13.7.1), the Kotlin twin of the Swift kit's
+`LiftMapCore` / `LiftMap`: the same names, numbers, SQL schema and on-screen
+words. It draws a run over streets the person downloaded, and nothing else.
+
+- **`StreetTiles` / `StreetAreaPlan`** -- tile maths and what a download
+  covers: a wide layer (zoom 0-10, 100 km) and a detail layer (zoom 11-14,
+  10, 25 or 50 km; `forRoute` grows a route's bounds by 2 km).
+- **`StreetStore`** -- every area in one MBTiles file,
+  `filesDir/liftmap/streets.mbtiles`, on `androidx.sqlite`'s bundled driver,
+  journal mode DELETE (MapLibre opens it read-only). Deleting an area keeps
+  tiles another area owns; an unfinished download is not an area; `revision`
+  goes up when an area finishes or is deleted. Each app excludes the file from
+  Android backup in its own `data_extraction_rules.xml`.
+- **`MapStyle`** -- the shared styles filled with `mbtiles://` and
+  `asset://` glyph URLs. No server is named; a map is only ever built with
+  `Style.Builder().fromJson`.
+- **`MapDownload`** -- **the one request**: OpenFreeMap's TileJSON and tiles,
+  https on `tiles.openfreemap.org` only (redirects included), four at a time,
+  `User-Agent: LIFT-maps/1`, no cookies, and only when the person starts it.
+- **`MapNetworkGuard`** -- tells MapLibre it is offline and hands it an HTTP
+  client that refuses every call.
+- **`RouteMap`**, **`MapsCard`**, **`StreetsSheet`** -- the route over the
+  streets (or the app's own canvas, passed as `fallback`, when no area covers
+  it), the Maps settings card, and the download sheet.
+
+`liftmap/src/main/assets/map/` is dugcanlift-kit's `map/` copied byte for byte
+with its `map-files.sha256`; `SharedMapFilesTest` pins it, so copy the files
+and the checksum over together and never edit them here. `NoNetworkTest`
+fails the build if network code appears outside `MapDownload.kt`, OkHttp
+outside `MapNetworkGuard.kt`, or a style is loaded from a URL anywhere.
+
 ## Coordinates
 
 Consumers depend on this as:
@@ -186,6 +220,6 @@ it does not fetch or clone anything itself.
 ## Local commands
 
 ```bash
-./gradlew test                              # run tests
-./gradlew :liftcore:publishToMavenLocal     # publish to ~/.m2 for local consumption
+./gradlew test                              # run tests (both modules; :liftmap needs the Android SDK)
+./gradlew :liftcore:publishToMavenLocal :liftmap:publishToMavenLocal   # publish to ~/.m2
 ```
