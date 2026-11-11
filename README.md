@@ -136,31 +136,42 @@ words. It draws a run over streets the person downloaded, and nothing else.
   streets (or the app's own canvas, passed as `fallback`, when no area covers
   it), the Maps settings card, and the download sheet.
 
-`liftmap/src/main/assets/map/` is dugcanlift-kit's `map/` copied byte for byte
-with its `map-files.sha256`; `SharedMapFilesTest` pins it, so copy the files
-and the checksum over together and never edit them here. `NoNetworkTest`
-fails the build if network code appears outside `MapDownload.kt`, OkHttp
-outside `MapNetworkGuard.kt`, or a style is loaded from a URL anywhere.
+`liftmap/src/main/assets/map/` holds dugcanlift-kit's styles and fonts from
+its `map/`, with the matching lines of its `map-files.sha256` (the kit's
+manifest also lists web files this module does not carry). All 256 glyph
+ranges ship: the five that hold glyphs, and an empty file for each of the
+rest, because MapLibre never draws a tile still waiting on a range whose file
+is missing. `SharedMapFilesTest` pins the files to those lines, so copy files
+and lines over together and never edit them here. `NoNetworkTest` fails the
+build if network code or an `http` literal appears outside `MapDownload.kt`,
+OkHttp outside `MapNetworkGuard.kt`, or a style is loaded from anything but a
+`Style.Builder` of local JSON.
 
 ## Coordinates
 
-Consumers depend on this as:
+Through 1.10.0 this repo published one module, and consumers depended on it as
 
 ```kotlin
 implementation("com.github.dougray:dugcanlift-kit-android:<tag>")
 ```
 
-resolved through JitPack. Note the artifact name is `dugcanlift-kit-android`
-— the **repository's** name — not `liftcore`, the Gradle **module's** own
-`artifactId` (set in `liftcore/build.gradle.kts`'s `publishing` block).
-JitPack's default single-module build publishes a repo's output under
-`com.github.<user>:<repo-name>:<tag>`, regardless of what the module calls
-itself internally, since a consumer resolving `com.github.dougray:<repo>`
-has no way to know or care how many modules the build has inside it. If this
-repo ever grows a second published module, that module gets its own
-JitPack-visible coordinate (`com.github.dougray:dugcanlift-kit-android:<module>:<tag>`);
-until then, depend on the repo-level coordinate above, not `liftcore`
-directly — `liftcore` as a Maven coordinate resolves nowhere on JitPack.
+-- the **repository's** name, which is how JitPack serves a single-module
+build whatever the module calls itself (`liftcore`).
+
+From 1.11.0 there are **two** published modules, `liftcore` (pure JVM) and
+`liftmap` (an Android library that brings MapLibre, about 11 MB per ABI).
+JitPack serves a multi-module build per module, as far as is known in the form
+
+```kotlin
+implementation("com.github.dougray.dugcanlift-kit-android:liftcore:<tag>")
+implementation("com.github.dougray.dugcanlift-kit-android:liftmap:<tag>")
+```
+
+Confirm the exact coordinates at tag time with a throwaway tag (build it on
+JitPack and resolve both from a consumer) before any app pins them. The
+repo-level coordinate above may now aggregate both modules, which would pull
+MapLibre into anything that depends on it; depend on each module by its own
+coordinate rather than relying on that.
 
 ## Versioning: pin exact, always
 
@@ -210,9 +221,22 @@ kitPath=../dugcanlift-kit-android
 (path relative to that consumer's Gradle root — `coach-android`'s is one
 level up; `LIFT/android`'s needs an extra `../`). The consumer's
 `settings.gradle.kts` turns that into an `includeBuild` with a dependency
-substitution — `substitute(module("com.github.dougray:dugcanlift-kit-android")).using(project(":liftcore"))`
-— so the local `:liftcore` project wins over the JitPack artifact with no
-network resolution and no tag needed. Remove the line (or delete the file)
+substitution for **each** module the consumer uses, so the local projects win
+over the JitPack artifacts with no network resolution and no tag needed:
+
+```kotlin
+includeBuild(kitPath) {
+    dependencySubstitution {
+        substitute(module("com.github.dougray.dugcanlift-kit-android:liftcore")).using(project(":liftcore"))
+        substitute(module("com.github.dougray.dugcanlift-kit-android:liftmap")).using(project(":liftmap"))
+    }
+}
+```
+
+(use whichever coordinates the consumer actually pins -- see Coordinates; a
+consumer still on the repo-level coordinate maps that one to `:liftcore`).
+`:liftmap` is an Android library, so the included build needs the Android
+SDK. Remove the line (or delete the file)
 to go back to building against the pinned tag. This only works if the local
 `dugcanlift-kit-android` checkout is a sibling directory at the path given;
 it does not fetch or clone anything itself.
