@@ -1,8 +1,10 @@
 package com.dugcanlift.liftmap
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.async
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -155,17 +157,37 @@ class MapHandshakeTest {
         assertFalse(store.writing.value)
     }
 
-    @Test fun theGateIsReleasedWhenTheWaitingWriterIsCancelled() = runBlocking<Unit> {
+    /**
+     * A Delete is the person's explicit action: leaving the screen while it
+     * waits for the maps must not drop it. The work runs on the store's own
+     * scope; the caller's scope only watches.
+     */
+    @Test fun aRemoveWhoseCallerGoesAwayStillDeletes() = runBlocking<Unit> {
         val store = makeStore()
         val id = store.beginArea(plan, "A")
         store.finishArea(id)
         store.mapOpened()
-        val removing = launch(Dispatchers.Default) { store.removeArea(id) }
+        val caller = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        caller.launch { store.removeArea(id) }
         delay(100)
         assertTrue(store.writing.value)
-        removing.cancelAndJoin()
-        assertFalse(store.writing.value)
-        assertEquals("a cancelled remove deletes nothing", listOf(id), store.areas().map { it.id })
+        caller.cancel() // the Maps card left the screen
+        delay(100)
+        assertEquals("still waiting for the map", listOf(id), store.areas().map { it.id })
         store.mapClosed()
+        withTimeout(5_000) { while (store.areas().isNotEmpty() || store.writing.value) delay(10) }
+        assertTrue(store.areas().isEmpty())
+        assertFalse("the gate comes down after the delete", store.writing.value)
+    }
+
+    @Test fun theGateIsReleasedWhenARemoveFails() = runBlocking<Unit> {
+        val store = makeStore()
+        store.close() // every statement now fails
+        try {
+            store.removeArea(UUID.randomUUID())
+            fail("expected the delete to fail")
+        } catch (_: Exception) {
+        }
+        assertFalse(store.writing.value)
     }
 }

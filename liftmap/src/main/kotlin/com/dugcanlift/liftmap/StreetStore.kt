@@ -5,12 +5,14 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.sqlite.execSQL
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.Closeable
 import java.io.File
@@ -59,6 +61,14 @@ class StreetStore internal constructor(val file: File) : Closeable {
      * download shows its streets, a deleted area falls back to the line.
      */
     val revision: StateFlow<Int> = _revision.asStateFlow()
+
+    /**
+     * The store's own scope, as long-lived as the store (one per process, from
+     * [standard]): work the person asked for -- a delete, a cancelled
+     * download's cleanup -- runs here, so it finishes even if the screen that
+     * started it goes away while it waits for the maps.
+     */
+    internal val work = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val gateLock = Any()
     private var writers = 0
@@ -307,17 +317,21 @@ class StreetStore internal constructor(val file: File) : Closeable {
     /**
      * Deletes [id] and every tile no other area still owns, once no map is
      * reading the file: raises the gate, waits for the maps to close, deletes
-     * off the main thread, and lowers the gate however it ends. A remove
-     * cancelled while it waits deletes nothing.
+     * off the main thread, and lowers the gate however it ends. The work runs
+     * on the store's own scope, so a caller that goes away (a screen left
+     * while it waits) only stops watching: the delete still happens. Returns
+     * when it is done, or throws what the delete threw.
      */
     suspend fun removeArea(id: UUID) {
-        beginWriting()
-        try {
-            awaitMapsClosed()
-            withContext(Dispatchers.IO) { deleteArea(id) }
-        } finally {
-            endWriting()
-        }
+        work.async {
+            beginWriting()
+            try {
+                awaitMapsClosed()
+                deleteArea(id)
+            } finally {
+                endWriting()
+            }
+        }.await()
     }
 
     /** The delete itself, synchronous; [removeArea] is the way in. */

@@ -141,7 +141,9 @@ a writer -- `MapDownload.download` / `resume`, the download sheet, and
 `StreetStore.removeArea` -- which raises the store's gate (`writing`) first,
 then waits for every open map to close (`awaitMapsClosed`: `mapsOpen` back to
 0, or 2 s, after which it goes ahead with `busy_timeout` behind it), and only
-then writes; the gate comes down in a `finally`, however the write ends. While
+then writes; the gate comes down in a `finally`, however the write ends.
+A delete and a cancelled download's cleanup run on the store's own
+long-lived scope, so leaving the screen while they wait never drops them. While
 the gate is up every `RouteMap` draws the plain line, which disposes its
 MapView, and a map counts itself closed only after that MapView's
 `onDestroy`. When the write ends the map is made again from the file as it now

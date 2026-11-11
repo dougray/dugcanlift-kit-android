@@ -67,7 +67,11 @@ fun MapsCard(
     var deleting by remember { mutableStateOf<StreetArea?>(null) }
     val scope = rememberCoroutineScope()
 
-    /** Removes an area off the main thread, once no map is reading the file. */
+    /**
+     * Removes an area off the main thread, once no map is reading the file.
+     * The work runs on the store's own scope (`removeArea`); this card's scope
+     * only waits to reload, so leaving the screen never drops the delete.
+     */
     fun remove(id: UUID) {
         scope.launch {
             runCatching { store.removeArea(id) }

@@ -32,6 +32,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.dugcanlift.kit.DclPalette
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -63,6 +65,15 @@ internal object StreetsSheetRules {
 
     /** A Cancel reports `onDone(null)` only if the sheet has not already reported its area. */
     fun cancelReports(finished: Boolean): Boolean = !finished
+}
+
+/** What the download job (main thread) and a Cancel's cleanup (the store's IO scope) share. */
+private class SheetSession(areaId: UUID?) {
+    /** The area this sheet is filling, once begun. */
+    @Volatile var areaId: UUID? = areaId
+
+    /** Set before `onDone(area)`: from then on a Cancel neither deletes nor reports. */
+    @Volatile var finished = false
 }
 
 private sealed interface Phase {
@@ -108,12 +119,10 @@ internal fun StreetsSheet(
     val scope = rememberCoroutineScope()
     var plan by remember { mutableStateOf(initialPlan) }
     var phase by remember { mutableStateOf(if (mode is StreetsSheetMode.Resume) Phase.Failed else Phase.Ready) }
-    /** The area this sheet is filling, once begun. */
-    var areaId by remember { mutableStateOf((mode as? StreetsSheetMode.Resume)?.areaId) }
+    /** The area this sheet is filling and whether it finished, shared with a Cancel's cleanup thread. */
+    val session = remember { SheetSession((mode as? StreetsSheetMode.Resume)?.areaId) }
     var job by remember { mutableStateOf<Job?>(null) }
     var stopping by remember { mutableStateOf(false) }
-    /** Set before `onDone(area)`: from then on a Cancel neither deletes nor reports. */
-    var finished by remember { mutableStateOf(false) }
     val progressFlow = remember { MutableStateFlow(0 to 0) }
     val progress by progressFlow.collectAsState()
 
@@ -137,10 +146,10 @@ internal fun StreetsSheet(
                 store.awaitMapsClosed()
                 // No suspension between beginning the area and remembering it,
                 // so a cancel always finds the area it must remove.
-                val id = areaId ?: store.beginArea(p, name).also { areaId = it }
+                val id = session.areaId ?: store.beginArea(p, name).also { session.areaId = it }
                 val area = MapDownload(store).resume(id, p) { done, total -> progressFlow.value = done to total }
                 phase = Phase.Ready
-                finished = true
+                session.finished = true
                 onDone(area)
             } catch (e: CancellationException) {
                 throw e
@@ -156,28 +165,34 @@ internal fun StreetsSheet(
      * Maps list) is kept, unfinished, as it was. [onDone] comes last.
      */
     fun cancel() {
-        if (stopping || !StreetsSheetRules.cancelReports(finished)) return
+        if (stopping || !StreetsSheetRules.cancelReports(session.finished)) return
         stopping = true
         val running = job
         // Held from before the download stops until its area is gone, so no map
         // reopens the file in between.
         store.beginWriting()
-        scope.launch {
-            running?.cancelAndJoin()
-            // The download may have finished and reported while we waited.
-            if (!StreetsSheetRules.cancelReports(finished)) return@launch
-            // Read after the join: the job may have begun the area while it ran.
-            val id = areaId
-            if (StreetsSheetRules.cancelMayDelete(mode, id, finished) && id != null) {
-                runCatching { store.removeArea(id) }
+        // On the store's own scope, not this sheet's: a sheet swiped away or
+        // removed while this waits must still remove the area it began.
+        store.work.launch {
+            try {
+                running?.cancelAndJoin()
+                // The download may have finished and reported while we waited.
+                if (!StreetsSheetRules.cancelReports(session.finished)) return@launch
+                // Read after the join: the job may have begun the area while it ran.
+                val id = session.areaId
+                if (StreetsSheetRules.cancelMayDelete(mode, id, session.finished) && id != null) {
+                    runCatching { store.removeArea(id) }
+                }
+                withContext(Dispatchers.Main) { onDone(null) }
+            } finally {
+                store.endWriting()
             }
-            onDone(null)
-        }.invokeOnCompletion { store.endWriting() } // runs even if the cleanup never starts
+        }
     }
 
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
-        confirmValueChange = { it != SheetValue.Hidden || (phase != Phase.Downloading && !stopping && !finished) },
+        confirmValueChange = { it != SheetValue.Hidden || (phase != Phase.Downloading && !stopping && !session.finished) },
     )
     val dark = isDarkTheme()
     val accent = Color(if (dark) DclPalette.ACCENT else DclPalette.ACCENT_LIGHT)
