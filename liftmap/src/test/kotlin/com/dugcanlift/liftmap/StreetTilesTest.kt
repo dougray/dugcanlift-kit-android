@@ -63,4 +63,14 @@ class StreetTilesTest {
         assertTrue(b.intersects(MapBounds(south = 3.0, west = 2.0, north = 5.0, east = 6.0)))
         assertFalse(b.intersects(MapBounds(south = 4.0, west = 0.0, north = 5.0, east = 1.0)))
     }
+
+    /** The Swift kit's numbers for Denver, pinned so the two builds plan the same download. */
+    @Test fun denverPlansMatchTheSwiftKit() {
+        val expected = mapOf(10 to (273 to 8_110_000), 25 to (1_125 to 23_790_000), 50 to (4_069 to 79_430_000))
+        for ((km, numbers) in expected) {
+            val plan = StreetAreaPlan(39.7392, -104.9903, km)
+            assertEquals("tiles for $km km", numbers.first, plan.tiles.size)
+            assertEquals("bytes for $km km", numbers.second, plan.estimatedBytes)
+        }
+    }
 }
