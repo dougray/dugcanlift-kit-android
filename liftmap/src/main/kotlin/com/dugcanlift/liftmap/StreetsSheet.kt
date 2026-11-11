@@ -32,12 +32,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.dugcanlift.kit.DclPalette
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /** What a [StreetsSheet] is for. */
@@ -127,19 +125,19 @@ internal fun StreetsSheet(
     fun start() {
         if (downloading || stopping) return
         val p = plan
-        // The write gate covers the whole session, from beginning the area to
-        // the job's end, however it ends; a cancel holds its own across cleanup.
+        // A writer raises the gate first, waits for open maps to close, and only
+        // then writes (beginning the area). The gate covers the whole session and
+        // comes down when the job ends, however it ends; a cancel holds its own
+        // across its cleanup.
         store.beginWriting()
-        val id = areaId ?: runCatching { store.beginArea(p, name) }.getOrNull()?.also { areaId = it }
-        if (id == null) {
-            store.endWriting()
-            phase = Phase.Failed
-            return
-        }
         progressFlow.value = 0 to p.tiles.size
         phase = Phase.Downloading
         job = scope.launch {
             try {
+                store.awaitMapsClosed()
+                // No suspension between beginning the area and remembering it,
+                // so a cancel always finds the area it must remove.
+                val id = areaId ?: store.beginArea(p, name).also { areaId = it }
                 val area = MapDownload(store).resume(id, p) { done, total -> progressFlow.value = done to total }
                 phase = Phase.Ready
                 finished = true
@@ -161,7 +159,6 @@ internal fun StreetsSheet(
         if (stopping || !StreetsSheetRules.cancelReports(finished)) return
         stopping = true
         val running = job
-        val id = areaId
         // Held from before the download stops until its area is gone, so no map
         // reopens the file in between.
         store.beginWriting()
@@ -169,8 +166,10 @@ internal fun StreetsSheet(
             running?.cancelAndJoin()
             // The download may have finished and reported while we waited.
             if (!StreetsSheetRules.cancelReports(finished)) return@launch
+            // Read after the join: the job may have begun the area while it ran.
+            val id = areaId
             if (StreetsSheetRules.cancelMayDelete(mode, id, finished) && id != null) {
-                withContext(Dispatchers.IO) { runCatching { store.deleteArea(id) } }
+                runCatching { store.removeArea(id) }
             }
             onDone(null)
         }.invokeOnCompletion { store.endWriting() } // runs even if the cleanup never starts

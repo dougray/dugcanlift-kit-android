@@ -5,9 +5,13 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.sqlite.execSQL
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.Closeable
 import java.io.File
 import java.time.Instant
@@ -31,8 +35,16 @@ data class StreetArea(
  *
  * One connection, every call serialised on it, so the download's four workers
  * and the screens can share a store.
+ *
+ * **Writes pause maps, by handshake.** Every write goes through a writer that
+ * raises the [writing] gate first, then waits for every open map to close
+ * ([awaitMapsClosed]: [mapsOpen] back to 0), and only then writes: a download
+ * or resume ([MapDownload]) and [removeArea]. A `RouteMap` draws the plain line
+ * while the gate is up, which disposes its MapView, and counts itself closed
+ * only after the MapView's `onDestroy`. Nothing else may write, so the writing
+ * calls are internal and [standard] is the only way an app gets a store.
  */
-class StreetStore(val file: File) : Closeable {
+class StreetStore internal constructor(val file: File) : Closeable {
     /** A tile was offered for an area with no `areas` row: never begun, or deleted. */
     class UnknownArea(val id: UUID) : Exception("No street area $id")
 
@@ -50,32 +62,66 @@ class StreetStore(val file: File) : Closeable {
 
     private val gateLock = Any()
     private var writers = 0
+    private var maps = 0
     private val _writing = MutableStateFlow(false)
+    private val _mapsOpen = MutableStateFlow(0)
 
     /**
-     * True while anything is writing the file: a download or a resume, from
-     * beginning its area to finishing, failing or being cancelled (cleanup
-     * included), and a [deleteArea]. **Writes pause maps**: `RouteMap` draws
-     * the plain line while this is true, which disposes its MapView so
-     * MapLibre stops reading the file, and draws the map again when it is
-     * false. On Android this is the only thing keeping them apart: this store
+     * The write gate: true from the moment a writer starts (a download or a
+     * resume, from before beginning its area to finishing, failing or being
+     * cancelled, cleanup included, and a [removeArea]) until it ends. A writer
+     * raises it, then waits for [mapsOpen] to reach 0 ([awaitMapsClosed]), and
+     * only then writes. `RouteMap` draws the plain line while it is true, which
+     * disposes its MapView, and draws the map again when it is false. On
+     * Android this handshake is the only thing keeping them apart: this store
      * writes through androidx's bundled SQLite and MapLibre reads through its
      * own native SQLite, two libraries in one process, and POSIX file locks do
      * not exclude each other within a process. `busy_timeout` stays as a
-     * second line of defence. A map only sees this gate if it uses the same
-     * store, which is why apps use [standard].
+     * second line of defence.
      */
     val writing: StateFlow<Boolean> = _writing.asStateFlow()
 
+    /**
+     * How many MapViews drawing from this store are alive: raised when one is
+     * made, lowered only after its `onDestroy`. A writer waits for 0.
+     */
+    val mapsOpen: StateFlow<Int> = _mapsOpen.asStateFlow()
+
+    internal fun mapOpened() {
+        synchronized(gateLock) {
+            maps += 1
+            _mapsOpen.value = maps
+        }
+    }
+
+    internal fun mapClosed() {
+        synchronized(gateLock) {
+            check(maps > 0) { "mapClosed without mapOpened" }
+            maps -= 1
+            _mapsOpen.value = maps
+        }
+    }
+
+    /**
+     * Waits until no map is open, or [timeoutMs] has passed, and returns either
+     * way: a map that never closes must not stop a download for ever, and the
+     * store's busy timeout is still there behind it. Call it with the gate
+     * already raised, so no new map opens while it waits.
+     */
+    suspend fun awaitMapsClosed(timeoutMs: Long = 2_000) {
+        if (mapsOpen.value == 0) return
+        withTimeoutOrNull(timeoutMs) { mapsOpen.first { it == 0 } }
+    }
+
     /** Opens the write gate; gates nest, and each must be ended by [endWriting], in a `finally`. */
-    fun beginWriting() {
+    internal fun beginWriting() {
         synchronized(gateLock) {
             writers += 1
             _writing.value = true
         }
     }
 
-    fun endWriting() {
+    internal fun endWriting() {
         synchronized(gateLock) {
             check(writers > 0) { "endWriting without beginWriting" }
             writers -= 1
@@ -84,7 +130,7 @@ class StreetStore(val file: File) : Closeable {
     }
 
     /** Runs [body] with the write gate held. */
-    inline fun <T> whileWriting(body: () -> T): T {
+    internal inline fun <T> whileWriting(body: () -> T): T {
         beginWriting()
         try {
             return body()
@@ -157,7 +203,7 @@ class StreetStore(val file: File) : Closeable {
 
     private fun key(id: UUID) = id.toString().uppercase()
 
-    fun beginArea(plan: StreetAreaPlan, name: String): UUID {
+    internal fun beginArea(plan: StreetAreaPlan, name: String): UUID {
         val id = UUID.randomUUID()
         transaction {
             db.prepare(
@@ -178,7 +224,7 @@ class StreetStore(val file: File) : Closeable {
      * Stores one tile for [area]. Refuses an area with no row ([UnknownArea]),
      * so a download still running after its area was deleted writes nothing.
      */
-    fun put(data: ByteArray, tile: TileID, area: UUID) {
+    internal fun put(data: ByteArray, tile: TileID, area: UUID) {
         transaction {
             val known = db.prepare("SELECT 1 FROM areas WHERE id = ?").use { it.bindText(1, key(area)); it.step() }
             if (!known) throw UnknownArea(area)
@@ -208,7 +254,7 @@ class StreetStore(val file: File) : Closeable {
         }
     }
 
-    fun finishArea(id: UUID) {
+    internal fun finishArea(id: UUID) {
         transaction {
             val bytes = db.prepare(
                 """SELECT COALESCE(SUM(LENGTH(t.tile_data)), 0) FROM area_tiles a
@@ -258,8 +304,24 @@ class StreetStore(val file: File) : Closeable {
         )
     }
 
-    /** Deletes the area and every tile no other area still owns, with the write gate held. */
-    fun deleteArea(id: UUID) = whileWriting {
+    /**
+     * Deletes [id] and every tile no other area still owns, once no map is
+     * reading the file: raises the gate, waits for the maps to close, deletes
+     * off the main thread, and lowers the gate however it ends. A remove
+     * cancelled while it waits deletes nothing.
+     */
+    suspend fun removeArea(id: UUID) {
+        beginWriting()
+        try {
+            awaitMapsClosed()
+            withContext(Dispatchers.IO) { deleteArea(id) }
+        } finally {
+            endWriting()
+        }
+    }
+
+    /** The delete itself, synchronous; [removeArea] is the way in. */
+    internal fun deleteArea(id: UUID) = whileWriting {
         transaction {
             db.prepare("DELETE FROM area_tiles WHERE area_id = ?").use { it.bindText(1, key(id)); it.step() }
             db.execSQL(

@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -73,10 +74,13 @@ const val MAP_ATTRIBUTION = StreetStore.ATTRIBUTION
  * finishes, an area is deleted) and when the route's bounds change, never on
  * every recomposition: a recording recomposes on each GPS fix.
  *
- * **Writes pause maps.** While the store is writing (`StreetStore.writing`: a
- * download, a resume, a delete), the line is drawn instead and the MapView is
- * disposed, so MapLibre is not reading the file while it changes; when the
- * write ends, the map is made again from the file as it now is.
+ * **Writes pause maps, by handshake.** A writer (a download, a resume,
+ * `StreetStore.removeArea`) raises the store's gate, then waits for every open
+ * map to close, and only then writes. While the gate is up this draws the line
+ * instead, so its MapView is disposed, and it counts itself closed only after
+ * `onDestroy`. When the write ends, the map is made again from the file as it
+ * now is. Disposing the MapView stops MapLibre's reads; MapLibre may still keep
+ * an idle connection to the file open, which reads nothing.
  *
  * The route stays the strongest thing on screen: a 5 dp accent line with round
  * caps, the start dot in the secondary accent (10 dp) and the end dot in the
@@ -134,7 +138,7 @@ fun RouteMap(
             .background(background)
             .clearAndSetSemantics { contentDescription = "Route" },
     ) {
-        StreetMap(points, style, revision, dark, interactive, Modifier.matchParentSize())
+        StreetMap(store, points, style, revision, dark, interactive, Modifier.matchParentSize())
         if (!interactive) {
             // Above the map, so the MapView never sees a touch; it consumes
             // nothing, so a tap still reaches the card that holds the map.
@@ -161,6 +165,7 @@ fun RouteMap(
 
 @Composable
 private fun StreetMap(
+    store: StreetStore,
     points: List<Pair<Double, Double>>,
     style: String,
     revision: Int,
@@ -169,7 +174,7 @@ private fun StreetMap(
     modifier: Modifier,
 ) {
     val padding = RouteFitPadding.forDensity(LocalDensity.current.density)
-    val mapView = rememberMapView(dark)
+    val mapView = rememberMapView(dark, store)
     val controller = remember(mapView) { RouteMapController(mapView, padding) }
     AndroidView(
         factory = { mapView },
@@ -178,12 +183,42 @@ private fun StreetMap(
     )
 }
 
+/**
+ * One MapView counted open on [store] for as long as it lives: counted when it
+ * is made (in composition, before any style is set) and counted closed only
+ * after its `onDestroy`, so a writer waiting in `awaitMapsClosed` never writes
+ * while this view could still be reading. Forgotten after the lifecycle effect
+ * below is disposed (Compose forgets in reverse order), so `onPause`/`onStop`
+ * come before `onDestroy`.
+ */
+private class OpenMap(val view: MapView, private val store: StreetStore) : RememberObserver {
+    private var closed = false
+
+    init {
+        store.mapOpened()
+    }
+
+    override fun onRemembered() {}
+    override fun onForgotten() = close()
+    override fun onAbandoned() = close()
+
+    private fun close() {
+        if (closed) return
+        closed = true
+        try {
+            view.onDestroy()
+        } finally {
+            store.mapClosed()
+        }
+    }
+}
+
 /** A MapView whose lifecycle follows the screen's (nomad-pocket's `rememberMapView`). */
 @Composable
-private fun rememberMapView(dark: Boolean): MapView {
+private fun rememberMapView(dark: Boolean, store: StreetStore): MapView {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val mapView = remember { newMapView(context, dark) }
+    val mapView = remember(store) { OpenMap(newMapView(context, dark), store) }.view
     DisposableEffect(lifecycle, mapView) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -199,7 +234,7 @@ private fun rememberMapView(dark: Boolean): MapView {
             lifecycle.removeObserver(observer)
             if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) mapView.onPause()
             if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) mapView.onStop()
-            mapView.onDestroy()
+            // onDestroy, and the count, belong to OpenMap, forgotten after this.
         }
     }
     return mapView

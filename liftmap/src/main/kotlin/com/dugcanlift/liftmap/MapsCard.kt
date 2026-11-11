@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.dugcanlift.kit.DclPalette
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 /**
@@ -63,6 +65,15 @@ fun MapsCard(
     LaunchedEffect(aroundHere) { here = aroundHere?.invoke() }
     var sheet by remember { mutableStateOf<SheetRequest?>(null) }
     var deleting by remember { mutableStateOf<StreetArea?>(null) }
+    val scope = rememberCoroutineScope()
+
+    /** Removes an area off the main thread, once no map is reading the file. */
+    fun remove(id: UUID) {
+        scope.launch {
+            runCatching { store.removeArea(id) }
+            reloads++
+        }
+    }
 
     val dark = isDarkTheme()
     val accentText = Color(if (dark) DclPalette.ACCENT_TEXT else DclPalette.ACCENT_TEXT_LIGHT)
@@ -126,7 +137,8 @@ fun MapsCard(
 
     sheet?.let { request ->
         StreetsSheet(request.plan, request.name, store, request.note, request.mode) { area ->
-            if (area != null) request.replacing?.let { old -> runCatching { store.deleteArea(old) } }
+            // An update replaces the old area only once the new one has finished.
+            if (area != null) request.replacing?.let { old -> remove(old) }
             sheet = null
             reloads++
         }
@@ -139,9 +151,8 @@ fun MapsCard(
             text = { Text(MapsText.DELETE_MESSAGE) },
             confirmButton = {
                 TextButton(onClick = {
-                    runCatching { store.deleteArea(area.id) }
                     deleting = null
-                    reloads++
+                    remove(area.id)
                 }, colors = textColors) { Text(MapsText.DELETE) }
             },
             dismissButton = {

@@ -38,9 +38,9 @@ sealed class MapDownloadException(message: String) : IOException(message) {
  * [resume] picks up, skipping the tiles already stored. A tile the host does
  * not have (404 or 204: the sea) is stored empty.
  *
- * The store's write gate (`StreetStore.writing`) is held for the whole of a
- * [download] or [resume], released however it ends, so maps step back while
- * the file changes.
+ * A [download] or [resume] is a writer: it raises the store's write gate,
+ * waits for every open map to close (`StreetStore.awaitMapsClosed`), and only
+ * then writes; the gate comes down however it ends.
  *
  * [http] opens a connection for a URL; tests hand in a fake.
  */
@@ -141,13 +141,17 @@ class MapDownload(
     /** Begins a new area for [plan] and fills it. [progress] gets (done, total), never going back. */
     suspend fun download(plan: StreetAreaPlan, name: String, progress: (Int, Int) -> Unit = { _, _ -> }): StreetArea =
         store.whileWriting {
+            store.awaitMapsClosed()
             val id = store.beginArea(plan, name)
             run(id, plan, progress)
         }
 
     /** Fills an area already begun (by [download] or a sheet), fetching only the tiles it lacks. */
     suspend fun resume(areaId: UUID, plan: StreetAreaPlan, progress: (Int, Int) -> Unit = { _, _ -> }): StreetArea =
-        store.whileWriting { run(areaId, plan, progress) }
+        store.whileWriting {
+            store.awaitMapsClosed()
+            run(areaId, plan, progress)
+        }
 
     private suspend fun run(id: UUID, plan: StreetAreaPlan, progress: (Int, Int) -> Unit): StreetArea =
         withContext(Dispatchers.IO) {
