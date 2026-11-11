@@ -52,6 +52,21 @@ internal sealed interface StreetsSheetMode {
     data class Resume(val areaId: UUID) : StreetsSheetMode
 }
 
+/** What a Cancel may do, kept out of the view so it can be tested. */
+internal object StreetsSheetRules {
+    /**
+     * A Cancel removes the area this sheet began (a new area or an update),
+     * unless the download already finished and went to the host: that area is
+     * the person's now, and in an update the old one is already gone. A retry
+     * keeps the unfinished area it came from.
+     */
+    fun cancelMayDelete(mode: StreetsSheetMode, areaId: UUID?, finished: Boolean): Boolean =
+        !finished && mode !is StreetsSheetMode.Resume && areaId != null
+
+    /** A Cancel reports `onDone(null)` only if the sheet has not already reported its area. */
+    fun cancelReports(finished: Boolean): Boolean = !finished
+}
+
 private sealed interface Phase {
     data object Ready : Phase
     data object Downloading : Phase
@@ -99,6 +114,8 @@ internal fun StreetsSheet(
     var areaId by remember { mutableStateOf((mode as? StreetsSheetMode.Resume)?.areaId) }
     var job by remember { mutableStateOf<Job?>(null) }
     var stopping by remember { mutableStateOf(false) }
+    /** Set before `onDone(area)`: from then on a Cancel neither deletes nor reports. */
+    var finished by remember { mutableStateOf(false) }
     val progressFlow = remember { MutableStateFlow(0 to 0) }
     val progress by progressFlow.collectAsState()
 
@@ -121,6 +138,7 @@ internal fun StreetsSheet(
             try {
                 val area = MapDownload(store).resume(id, p) { done, total -> progressFlow.value = done to total }
                 phase = Phase.Ready
+                finished = true
                 onDone(area)
             } catch (e: CancellationException) {
                 throw e
@@ -136,13 +154,15 @@ internal fun StreetsSheet(
      * Maps list) is kept, unfinished, as it was. [onDone] comes last.
      */
     fun cancel() {
-        if (stopping) return
+        if (stopping || !StreetsSheetRules.cancelReports(finished)) return
         stopping = true
         val running = job
         val id = areaId
         scope.launch {
             running?.cancelAndJoin()
-            if (mode !is StreetsSheetMode.Resume && id != null) {
+            // The download may have finished and reported while we waited.
+            if (!StreetsSheetRules.cancelReports(finished)) return@launch
+            if (StreetsSheetRules.cancelMayDelete(mode, id, finished) && id != null) {
                 withContext(Dispatchers.IO) { runCatching { store.deleteArea(id) } }
             }
             onDone(null)
@@ -151,7 +171,7 @@ internal fun StreetsSheet(
 
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
-        confirmValueChange = { it != SheetValue.Hidden || (phase != Phase.Downloading && !stopping) },
+        confirmValueChange = { it != SheetValue.Hidden || (phase != Phase.Downloading && !stopping && !finished) },
     )
     val dark = isDarkTheme()
     val accent = Color(if (dark) DclPalette.ACCENT else DclPalette.ACCENT_LIGHT)
