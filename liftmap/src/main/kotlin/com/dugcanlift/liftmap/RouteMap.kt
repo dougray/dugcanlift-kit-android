@@ -75,7 +75,8 @@ const val MAP_ATTRIBUTION = StreetStore.ATTRIBUTION
  *
  * The route stays the strongest thing on screen: a 5 dp accent line with round
  * caps, the start dot in the secondary accent (10 dp) and the end dot in the
- * accent (12 dp). The camera fits the whole route with 24 dp to spare and fits
+ * accent (12 dp). The camera fits the whole route with 24 dp to spare (50 dp
+ * at the bottom, clear of the attribution; [RouteFitPadding]) and fits
  * again as the route grows. No location dot, no compass, no logo, no rotation;
  * pan and zoom only when [interactive]. A map that is not interactive lets
  * taps through to whatever holds it (a card that opens the run).
@@ -157,9 +158,9 @@ private fun StreetMap(
     interactive: Boolean,
     modifier: Modifier,
 ) {
-    val padPx = with(LocalDensity.current) { RouteLayers.EDGE_PADDING_DP.dp.roundToPx() }
+    val padding = RouteFitPadding.forDensity(LocalDensity.current.density)
     val mapView = rememberMapView(dark)
-    val controller = remember(mapView) { RouteMapController(mapView, padPx) }
+    val controller = remember(mapView) { RouteMapController(mapView, padding) }
     AndroidView(
         factory = { mapView },
         modifier = modifier,
@@ -209,7 +210,6 @@ private fun newMapView(context: Context, dark: Boolean): MapView {
 
 /** The route's sizes and layer names, the same as the Swift kit's `StreetMapView`. */
 internal object RouteLayers {
-    const val EDGE_PADDING_DP = 24
     const val LINE_WIDTH = 5f
     const val START_RADIUS = 5f // a 10 dp dot
     const val END_RADIUS = 6f // a 12 dp dot
@@ -237,7 +237,7 @@ internal object RouteLayers {
 }
 
 /** Puts the style and the route on one MapView and keeps the camera on the route. */
-private class RouteMapController(private val view: MapView, private val padPx: Int) {
+private class RouteMapController(private val view: MapView, private val padding: RouteFitPadding) {
     private var map: MapLibreMap? = null
     private var loaded: Style? = null
     private var styleJson: String? = null
@@ -358,11 +358,16 @@ private class RouteMapController(private val view: MapView, private val padPx: I
         style.getSourceAs<GeoJsonSource>(RouteLayers.END_SOURCE)?.setGeoJson(end())
     }
 
-    /** Fits the whole route with 24 dp to spare, once the view has a size. */
+    /** Fits the whole route inside [padding], once the view has a size. */
     private fun fit() {
         val m = map ?: return
-        if (view.width <= padPx * 2 + 1 || view.height <= padPx * 2 + 1) return
+        if (!padding.fits(view.width, view.height)) return
         val b = RouteLayers.fitBounds(points) ?: return
-        m.moveCamera(CameraUpdateFactory.newLatLngBounds(LatLngBounds.from(b.north, b.east, b.south, b.west), padPx))
+        m.moveCamera(
+            CameraUpdateFactory.newLatLngBounds(
+                LatLngBounds.from(b.north, b.east, b.south, b.west),
+                padding.left, padding.top, padding.right, padding.bottom,
+            ),
+        )
     }
 }

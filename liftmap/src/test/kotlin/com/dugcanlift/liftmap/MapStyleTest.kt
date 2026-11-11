@@ -87,3 +87,25 @@ class StyleReloadTest {
         assertEquals(true, StyleReload.needed("{a}", null, 0, null))
     }
 }
+
+class RouteFitPaddingTest {
+    @Test fun theBottomClearsTheAttribution() {
+        for (density in listOf(1f, 2f, 2.625f, 3.5f)) {
+            val p = RouteFitPadding.forDensity(density)
+            assertTrue("density $density: $p", p.bottom > p.left && p.bottom > p.top && p.bottom > p.right)
+        }
+    }
+
+    @Test fun theSidesAre24AndTheBottom50() {
+        assertEquals(RouteFitPadding(24, 24, 24, 50), RouteFitPadding.forDensity(1f))
+        assertEquals(RouteFitPadding(72, 72, 72, 150), RouteFitPadding.forDensity(3f))
+        assertEquals(RouteFitPadding(63, 63, 63, 131), RouteFitPadding.forDensity(2.625f))
+    }
+
+    @Test fun aViewTooSmallForThePaddingIsNotFitted() {
+        val p = RouteFitPadding.forDensity(1f)
+        assertEquals(false, p.fits(48, 200))
+        assertEquals(false, p.fits(200, 74))
+        assertEquals(true, p.fits(49, 75))
+    }
+}

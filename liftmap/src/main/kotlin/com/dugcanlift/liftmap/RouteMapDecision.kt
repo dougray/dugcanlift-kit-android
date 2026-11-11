@@ -25,3 +25,25 @@ internal object StyleReload {
     fun needed(json: String, lastJson: String?, revision: Int, lastRevision: Int?): Boolean =
         json != lastJson || revision != lastRevision
 }
+
+/**
+ * The room left around a route when the camera fits it, in pixels: 24 dp on
+ * the left, top and right, and 50 dp at the bottom, where the attribution sits
+ * (bottom-trailing), so the text never covers the route or its start dot --
+ * the web build's 24 / 50 px.
+ */
+data class RouteFitPadding(val left: Int, val top: Int, val right: Int, val bottom: Int) {
+    /** True when a view this size leaves any room for the route inside the padding. */
+    fun fits(width: Int, height: Int): Boolean = width > left + right && height > top + bottom
+
+    companion object {
+        const val SIDE_DP = 24f
+        const val BOTTOM_DP = 50f
+
+        /** [density] is pixels per dp. */
+        fun forDensity(density: Float): RouteFitPadding {
+            val side = kotlin.math.round(SIDE_DP * density).toInt()
+            return RouteFitPadding(side, side, side, kotlin.math.round(BOTTOM_DP * density).toInt())
+        }
+    }
+}
