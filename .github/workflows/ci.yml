@@ -29,19 +29,22 @@ jobs:
       # Caches ~/.gradle and validates the wrapper jar checksum.
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
+      # :liftmap is an Android library; the runner image carries the Android SDK.
       - name: Unit tests
-        run: ./gradlew :liftcore:test --rerun
+        run: ./gradlew test --rerun
 
       # The exact command jitpack.yml runs on a tag, so a tag never discovers
       # a publishing problem CI could have caught.
       - name: Publish to Maven local (dry run)
-        run: ./gradlew :liftcore:publishToMavenLocal -PKIT_VERSION=ci
+        run: ./gradlew :liftcore:publishToMavenLocal :liftmap:publishToMavenLocal -PKIT_VERSION=ci
 
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-report
-          path: liftcore/build/reports/tests/test
+          path: |
+            liftcore/build/reports/tests/test
+            liftmap/build/reports/tests
           if-no-files-found: ignore
           retention-days: 7

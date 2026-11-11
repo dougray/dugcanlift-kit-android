@@ -1,4 +1,6 @@
+# :liftmap is an Android library, so this build needs JitPack's Android SDK
+# (its default image carries one; AGP fetches a missing platform itself).
 jdk:
   - openjdk17
 install:
-  - ./gradlew :liftcore:publishToMavenLocal -PKIT_VERSION=$VERSION
+  - ./gradlew :liftcore:publishToMavenLocal :liftmap:publishToMavenLocal -PKIT_VERSION=$VERSION

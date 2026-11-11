@@ -108,25 +108,101 @@ Everything here stays boring and is covered by its own tests in
 `liftcore/src/test/` — a change reaches every consumer app with no way for
 any one of them to opt out.
 
+## What's in `liftmap` (1.11.0)
+
+`liftmap` is an **Android library** (AGP, Compose, MapLibre
+`android-sdk-opengl` 13.7.1), the Kotlin twin of the Swift kit's
+`LiftMapCore` / `LiftMap`: the same names, numbers, SQL schema and on-screen
+words. It draws a run over streets the person downloaded, and nothing else.
+
+- **`StreetTiles` / `StreetAreaPlan`** -- tile maths and what a download
+  covers: a wide layer (zoom 0-10, 100 km) and a detail layer (zoom 11-14,
+  10, 25 or 50 km; `forRoute` grows a route's bounds by 2 km).
+- **`StreetStore`** -- every area in one MBTiles file,
+  `filesDir/liftmap/streets.mbtiles`, on `androidx.sqlite`'s bundled driver,
+  journal mode DELETE (MapLibre opens it read-only). Deleting an area keeps
+  tiles another area owns; an unfinished download is not an area; `revision`
+  goes up when an area finishes or is deleted. Each app excludes the file from
+  Android backup in its own `data_extraction_rules.xml`.
+- **`MapStyle`** -- the shared styles filled with `mbtiles://` and
+  `asset://` glyph URLs. No server is named; a map is only ever built with
+  `Style.Builder().fromJson`.
+- **`MapDownload`** -- **the one request**: OpenFreeMap's TileJSON and tiles,
+  https on `tiles.openfreemap.org` only (redirects included), four at a time,
+  `User-Agent: LIFT-maps/1`, no cookies, and only when the person starts it.
+- **`MapNetworkGuard`** -- tells MapLibre it is offline and hands it an HTTP
+  client that refuses every call.
+- **`RouteMap`**, **`MapsCard`**, **`StreetsSheet`** -- the route over the
+  streets (or the app's own canvas, passed as `fallback`, when no area covers
+  it), the Maps settings card, and the download sheet.
+
+**Writes pause maps, by handshake.** Every write to the store goes through
+a writer -- `MapDownload.download` / `resume`, the download sheet, and
+`StreetStore.removeArea` -- which raises the store's gate (`writing`) first,
+then waits for every open map to close (`awaitMapsClosed`: `mapsOpen` back to
+0, or 2 s), and only then writes; the gate comes down in a `finally`, however
+the write ends. While the gate is up a map cannot even open: the store refuses
+it under the same lock, so it draws the line and tries again when the gate
+comes down. After the 2 s timeout nothing keeps a stuck map and the writer
+apart (`busy_timeout` cannot: the two use different SQLite libraries), which
+is why the timeout is only for a map that never closes, and why the on-device
+check below matters.
+A delete and a cancelled download's cleanup run on the store's own
+long-lived scope, so leaving the screen while they wait never drops them. While
+the gate is up every `RouteMap` draws the plain line, which disposes its
+MapView, and a map counts itself closed only after that MapView's
+`onDestroy`. When the write ends the map is made again from the file as it now
+is. The writing calls (`put`, `beginArea`, `finishArea`, the synchronous
+`deleteArea`, the constructor) are internal, so nothing outside the module
+can write past the gate, and `StreetStore.standard(ctx)` is the only way an
+app gets a store (one per file). Disposing a MapView stops MapLibre's reads;
+MapLibre may still keep an idle connection to the file open, which reads
+nothing.
+
+On Android the handshake is load-bearing: the store writes through
+androidx's bundled SQLite and MapLibre reads through its own native SQLite,
+two different libraries in one process, and POSIX file locks do not exclude
+each other within a process, so SQLite itself keeps nothing apart.
+Not yet checked on a device: open a run's map, start an Update from the Maps
+card, and watch for crashes or blank tiles while it runs and after it
+finishes.
+
+`liftmap/src/main/assets/map/` holds dugcanlift-kit's styles and fonts from
+its `map/`, with the matching lines of its `map-files.sha256` (the kit's
+manifest also lists web files this module does not carry). All 256 glyph
+ranges ship: the five that hold glyphs, and an empty file for each of the
+rest, because MapLibre never draws a tile still waiting on a range whose file
+is missing. `SharedMapFilesTest` pins the files to those lines, so copy files
+and lines over together and never edit them here. `NoNetworkTest` fails the
+build if network code or an `http` literal appears outside `MapDownload.kt`,
+OkHttp outside `MapNetworkGuard.kt`, or a style is loaded from anything but a
+`Style.Builder` of local JSON.
+
 ## Coordinates
 
-Consumers depend on this as:
+Through 1.10.0 this repo published one module, and consumers depended on it as
 
 ```kotlin
 implementation("com.github.dougray:dugcanlift-kit-android:<tag>")
 ```
 
-resolved through JitPack. Note the artifact name is `dugcanlift-kit-android`
-— the **repository's** name — not `liftcore`, the Gradle **module's** own
-`artifactId` (set in `liftcore/build.gradle.kts`'s `publishing` block).
-JitPack's default single-module build publishes a repo's output under
-`com.github.<user>:<repo-name>:<tag>`, regardless of what the module calls
-itself internally, since a consumer resolving `com.github.dougray:<repo>`
-has no way to know or care how many modules the build has inside it. If this
-repo ever grows a second published module, that module gets its own
-JitPack-visible coordinate (`com.github.dougray:dugcanlift-kit-android:<module>:<tag>`);
-until then, depend on the repo-level coordinate above, not `liftcore`
-directly — `liftcore` as a Maven coordinate resolves nowhere on JitPack.
+-- the **repository's** name, which is how JitPack serves a single-module
+build whatever the module calls itself (`liftcore`).
+
+From 1.11.0 there are **two** published modules, `liftcore` (pure JVM) and
+`liftmap` (an Android library that brings MapLibre, about 11 MB per ABI).
+JitPack serves a multi-module build per module, as far as is known in the form
+
+```kotlin
+implementation("com.github.dougray.dugcanlift-kit-android:liftcore:<tag>")
+implementation("com.github.dougray.dugcanlift-kit-android:liftmap:<tag>")
+```
+
+Confirm the exact coordinates at tag time with a throwaway tag (build it on
+JitPack and resolve both from a consumer) before any app pins them. The
+repo-level coordinate above may now aggregate both modules, which would pull
+MapLibre into anything that depends on it; depend on each module by its own
+coordinate rather than relying on that.
 
 ## Versioning: pin exact, always
 
@@ -176,9 +252,22 @@ kitPath=../dugcanlift-kit-android
 (path relative to that consumer's Gradle root — `coach-android`'s is one
 level up; `LIFT/android`'s needs an extra `../`). The consumer's
 `settings.gradle.kts` turns that into an `includeBuild` with a dependency
-substitution — `substitute(module("com.github.dougray:dugcanlift-kit-android")).using(project(":liftcore"))`
-— so the local `:liftcore` project wins over the JitPack artifact with no
-network resolution and no tag needed. Remove the line (or delete the file)
+substitution for **each** module the consumer uses, so the local projects win
+over the JitPack artifacts with no network resolution and no tag needed:
+
+```kotlin
+includeBuild(kitPath) {
+    dependencySubstitution {
+        substitute(module("com.github.dougray.dugcanlift-kit-android:liftcore")).using(project(":liftcore"))
+        substitute(module("com.github.dougray.dugcanlift-kit-android:liftmap")).using(project(":liftmap"))
+    }
+}
+```
+
+(use whichever coordinates the consumer actually pins -- see Coordinates; a
+consumer still on the repo-level coordinate maps that one to `:liftcore`).
+`:liftmap` is an Android library, so the included build needs the Android
+SDK. Remove the line (or delete the file)
 to go back to building against the pinned tag. This only works if the local
 `dugcanlift-kit-android` checkout is a sibling directory at the path given;
 it does not fetch or clone anything itself.
@@ -186,6 +275,6 @@ it does not fetch or clone anything itself.
 ## Local commands
 
 ```bash
-./gradlew test                              # run tests
-./gradlew :liftcore:publishToMavenLocal     # publish to ~/.m2 for local consumption
+./gradlew test                              # run tests (both modules; :liftmap needs the Android SDK)
+./gradlew :liftcore:publishToMavenLocal :liftmap:publishToMavenLocal   # publish to ~/.m2
 ```

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- No permission of its own. MapLibre's manifest merges in what it declares;
+     the one request (MapDownload) uses the app's INTERNET permission. -->
+<manifest />

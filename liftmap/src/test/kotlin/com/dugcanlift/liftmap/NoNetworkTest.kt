@@ -1,0 +1,90 @@
+package com.dugcanlift.liftmap
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+
+/**
+ * Only the person's street-map download may reach the network, and only its
+ * file may name the tile host. `MapNetworkGuard` alone may touch OkHttp, to
+ * hand MapLibre a client that refuses every request. No map is ever built from
+ * a style URL (`fromUri(`, `fromUrl(`, `setStyle("`), no URL is made from a
+ * file or URI (`.toURL(`), and MapLibre's URL-keyed offline cache
+ * (`OfflineManager`) is never used, in any file.
+ */
+class NoNetworkTest {
+    private val sources = File("src/main/kotlin")
+
+    companion object {
+        /** Line comments first, so a `/*` inside one cannot eat real code up to a later `*/`. */
+        fun stripComments(code: String): String =
+            code.replace(Regex("//[^\n]*"), "").replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
+
+        val network = listOf("HttpURLConnection", "openConnection", "URL(", "HttpsURLConnection", "Socket(", "URLConnection")
+        const val ALLOWED_NETWORK = "MapDownload.kt"
+
+        /** `setStyle(` handed anything but a `Style.Builder`: a URL string or a variable holding one. */
+        val styleNotBuilt = Regex("""setStyle\((?!\s*Style\.Builder)""")
+
+        /** `URL (` with whitespace before the parenthesis, which `URL(` alone would miss. */
+        val spacedUrl = Regex("""\bURL\s+\(""")
+        const val ALLOWED_OKHTTP = "MapNetworkGuard.kt"
+
+        fun offences(name: String, code: String): List<String> {
+            val bare = stripComments(code)
+            val out = mutableListOf<String>()
+            if (name != ALLOWED_NETWORK) {
+                network.filter { bare.contains(it) }.forEach { out += "$name: $it" }
+                if (bare.contains("openfreemap") || bare.lowercase().contains("openfreemap.org")) out += "$name: names the tile host"
+            }
+            if (name != ALLOWED_OKHTTP && bare.lowercase().contains("okhttp")) out += "$name: OkHttp"
+            if (bare.contains("fromUri(") || bare.contains("fromUrl(") || styleNotBuilt.containsMatchIn(bare)) {
+                out += "$name: style from a URL"
+            }
+            if (name != ALLOWED_NETWORK && bare.contains("\"http")) out += "$name: http literal"
+            if (spacedUrl.containsMatchIn(bare)) out += "$name: URL ("
+            if (bare.contains(".toURL(")) out += "$name: .toURL("
+            if (bare.contains("OfflineManager")) out += "$name: OfflineManager"
+            return out
+        }
+    }
+
+    @Test fun theCheckSeesWhatItLooksFor() {
+        assertEquals(listOf("A.kt: openConnection"), offences("A.kt", "val c = u.openConnection()"))
+        assertEquals(emptyList<String>(), offences("A.kt", "// u.openConnection()\nval x = 1"))
+        assertEquals(listOf("A.kt: URL("), offences("A.kt", "/// reads src/*\nval u = URL(s)\n/* note */"))
+        assertEquals(listOf("A.kt: names the tile host"), offences("A.kt", "val h = \"tiles.OpenFreeMap.org\""))
+        assertEquals(emptyList<String>(), offences("A.kt", "val a = \"© OpenStreetMap contributors · OpenFreeMap\""))
+        assertEquals(listOf("A.kt: OkHttp"), offences("A.kt", "import okhttp3.OkHttpClient"))
+        assertEquals(listOf("A.kt: style from a URL"), offences("A.kt", "Style.Builder().fromUri(x)"))
+        assertEquals(listOf("MapDownload.kt: style from a URL"), offences("MapDownload.kt", "openConnection(); fromUri(x)"))
+        assertEquals(listOf("A.kt: style from a URL", "A.kt: http literal"), offences("A.kt", "map.setStyle(\"https://x/style.json\")"))
+        assertEquals(listOf("A.kt: style from a URL"), offences("A.kt", "map.setStyle(styleUrl)"))
+        assertEquals(listOf("A.kt: style from a URL"), offences("A.kt", "map.setStyle( url) { }"))
+        assertEquals(emptyList<String>(), offences("A.kt", "map.setStyle( Style.Builder().fromJson(json)) { }"))
+        assertEquals(listOf("A.kt: http literal"), offences("A.kt", "VectorSource(\"s\", \"https://tiles.example/{z}.pbf\")"))
+        assertEquals(listOf("A.kt: http literal"), offences("A.kt", "RasterSource(\"r\", \"http://x\")"))
+        assertEquals(emptyList<String>(), offences("A.kt", "val s = \"mbtiles:///data/x.mbtiles\""))
+        assertEquals(emptyList<String>(), offences("MapDownload.kt", "val u = \"https://tiles.openfreemap.org/planet\""))
+        assertEquals(listOf("A.kt: URL ("), offences("A.kt", "val u = URL (s)"))
+        assertEquals(listOf("A.kt: URL ("), offences("A.kt", "val u = URL\t(s)"))
+        assertEquals(emptyList<String>(), offences("A.kt", "val name = \"URL\"; f(name)"))
+        assertEquals(emptyList<String>(), offences("A.kt", "fun mbtilesUrl (file: File)"))
+        assertEquals(emptyList<String>(), offences("A.kt", "map.setStyle(Style.Builder().fromJson(json))"))
+        assertEquals(listOf("A.kt: URL(", "A.kt: .toURL("), offences("A.kt", "val u = file.toURI().toURL()"))
+        assertEquals(listOf("MapDownload.kt: .toURL("), offences("MapDownload.kt", "uri.toURL()"))
+        assertEquals(listOf("A.kt: OfflineManager"), offences("A.kt", "OfflineManager.getInstance(ctx)"))
+        assertEquals(listOf("MapDownload.kt: OfflineManager"), offences("MapDownload.kt", "import org.maplibre.android.offline.OfflineManager"))
+    }
+
+    @Test fun onlyMapDownloadMayReachTheNetwork() {
+        val files = sources.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        assertTrue("found too little source under ${sources.absolutePath}", files.size >= 8)
+        val found = files.flatMap { offences(it.name, it.readText()) }
+        assertEquals(emptyList<String>(), found)
+        // The two allowances are real files, so a rename cannot quietly widen them.
+        assertTrue(files.any { it.name == ALLOWED_NETWORK && it.readText().contains("tiles.openfreemap.org") })
+        assertTrue(files.any { it.name == ALLOWED_OKHTTP })
+    }
+}
