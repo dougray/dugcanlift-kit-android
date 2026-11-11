@@ -9,6 +9,8 @@ import org.junit.Assert.fail
 import org.junit.Test
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /** Ported from the Swift kit's `StreetStoreTests`, case for case, plus the revision and orphan rules. */
 class StreetStoreTest {
@@ -149,5 +151,68 @@ class StreetStoreTest {
         val again = StreetStore(store.file)
         assertEquals(listOf(id), again.areas().map { it.id })
         again.close()
+    }
+
+    private fun newFile(): File =
+        File(System.getProperty("java.io.tmpdir"), "streets-${UUID.randomUUID()}.mbtiles").also { files += it }
+
+    @Test fun aStoreWithTheOldSchemaGainsTheTileIndexOnOpen() {
+        val f = newFile()
+        // The schema as 1.11.0's first build wrote it, without area_tiles_zxy.
+        val c = BundledSQLiteDriver().open(f.path)
+        for (sql in listOf(
+            "CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT)",
+            "CREATE TABLE tiles (zoom_level INT, tile_column INT, tile_row INT, tile_data BLOB, PRIMARY KEY (zoom_level, tile_column, tile_row))",
+            "CREATE TABLE areas (id TEXT PRIMARY KEY, name TEXT, south REAL, west REAL, north REAL, east REAL, detail_km INT, started_at REAL, finished_at REAL, bytes INT)",
+            "CREATE TABLE area_tiles (area_id TEXT, z INT, x INT, y INT, PRIMARY KEY (area_id, z, x, y))",
+        )) c.prepare(sql).use { it.step() }
+        c.close()
+
+        val store = StreetStore(f)
+        assertEquals(1L, count(store, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'area_tiles_zxy'"))
+        // deleteArea's sweep looks tiles up by (z, x, y): it must use the index, not scan.
+        val plan = query(store, """EXPLAIN QUERY PLAN DELETE FROM tiles WHERE NOT EXISTS (
+            SELECT 1 FROM area_tiles a
+            WHERE a.z = zoom_level AND a.x = tile_column AND a.y = ((1 << zoom_level) - 1 - tile_row))""") { st ->
+            val rows = mutableListOf(st.getText(3))
+            while (st.step()) rows += st.getText(3)
+            rows.joinToString(" | ")
+        }
+        assertTrue(plan, plan.contains("area_tiles_zxy"))
+        store.close()
+    }
+
+    @Test fun aWriteWaitsForAReaderInsteadOfFailing() {
+        val store = makeStore()
+        val id = store.beginArea(plan(), "Denver")
+        val reading = CountDownLatch(1)
+        var readerError: Throwable? = null
+        val reader = Thread {
+            try {
+                val c = BundledSQLiteDriver().open(store.file.path)
+                try {
+                    // A read transaction, as MapLibre's tile reader holds one: SHARED until it ends.
+                    c.prepare("BEGIN").use { it.step() }
+                    c.prepare("SELECT COUNT(*) FROM tiles").use { it.step() }
+                    reading.countDown()
+                    Thread.sleep(200)
+                    c.prepare("COMMIT").use { it.step() }
+                } finally {
+                    c.close()
+                }
+            } catch (t: Throwable) {
+                readerError = t
+                reading.countDown()
+            }
+        }
+        reader.start()
+        assertTrue(reading.await(5, TimeUnit.SECONDS))
+        val started = System.nanoTime()
+        store.put(byteArrayOf(1, 2, 3), TileID(14, 3413, 6218), id) // COMMIT needs EXCLUSIVE: waits for the reader
+        val waitedMs = (System.nanoTime() - started) / 1_000_000
+        reader.join(5_000)
+        assertEquals(null, readerError)
+        assertTrue(store.hasTile(TileID(14, 3413, 6218), id))
+        assertTrue("the put should have waited for the reader, waited $waitedMs ms", waitedMs >= 100)
     }
 }

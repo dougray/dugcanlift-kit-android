@@ -52,6 +52,10 @@ class StreetStore(val file: File) : Closeable {
         file.parentFile?.mkdirs()
         db = BundledSQLiteDriver().open(file.path)
         try {
+            // MapLibre's tile reader holds read locks while it draws, and in
+            // DELETE mode a COMMIT needs the file to itself: wait up to 5 s for
+            // a reader to finish rather than fail with SQLITE_BUSY.
+            db.prepare("PRAGMA busy_timeout = $BUSY_TIMEOUT_MS").use { it.step() }
             // MapLibre opens the file read-only; a WAL would need write access to -shm.
             db.prepare("PRAGMA journal_mode = DELETE").use { it.step() }
             transaction {
@@ -70,6 +74,10 @@ class StreetStore(val file: File) : Closeable {
                     """CREATE TABLE IF NOT EXISTS area_tiles (
                     area_id TEXT, z INT, x INT, y INT, PRIMARY KEY (area_id, z, x, y))""",
                 )
+                // deleteArea keeps a tile while any area still owns it, a lookup by
+                // (z, x, y) the primary key (led by area_id) cannot answer without a
+                // scan per tile. A store written before this gains it on open.
+                db.execSQL("CREATE INDEX IF NOT EXISTS area_tiles_zxy ON area_tiles (z, x, y)")
                 val meta = listOf(
                     "name" to "LIFT streets", "format" to "pbf", "minzoom" to "0", "maxzoom" to "14",
                     "attribution" to ATTRIBUTION,
@@ -233,6 +241,9 @@ class StreetStore(val file: File) : Closeable {
     companion object {
         /** OpenStreetMap's licence asks for the first half; OpenFreeMap is credited beside it. */
         const val ATTRIBUTION = "© OpenStreetMap contributors · OpenFreeMap"
+
+        /** How long a write waits for a reader (MapLibre) to let go of the file. */
+        internal const val BUSY_TIMEOUT_MS = 5_000
 
         private val opened = mutableMapOf<String, StreetStore>()
 
