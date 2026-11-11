@@ -9,7 +9,9 @@ import java.io.File
  * Only the person's street-map download may reach the network, and only its
  * file may name the tile host. `MapNetworkGuard` alone may touch OkHttp, to
  * hand MapLibre a client that refuses every request. No map is ever built from
- * a style URL (`fromUri(`): styles come from local JSON only.
+ * a style URL (`fromUri(`, `fromUrl(`, `setStyle("`), no URL is made from a
+ * file or URI (`.toURL(`), and MapLibre's URL-keyed offline cache
+ * (`OfflineManager`) is never used, in any file.
  */
 class NoNetworkTest {
     private val sources = File("src/main/kotlin")
@@ -31,7 +33,9 @@ class NoNetworkTest {
                 if (bare.contains("openfreemap") || bare.lowercase().contains("openfreemap.org")) out += "$name: names the tile host"
             }
             if (name != ALLOWED_OKHTTP && bare.lowercase().contains("okhttp")) out += "$name: OkHttp"
-            if (bare.contains("fromUri(") || bare.contains("fromUrl(")) out += "$name: style from a URL"
+            if (bare.contains("fromUri(") || bare.contains("fromUrl(") || bare.contains("setStyle(\"")) out += "$name: style from a URL"
+            if (bare.contains(".toURL(")) out += "$name: .toURL("
+            if (bare.contains("OfflineManager")) out += "$name: OfflineManager"
             return out
         }
     }
@@ -45,6 +49,12 @@ class NoNetworkTest {
         assertEquals(listOf("A.kt: OkHttp"), offences("A.kt", "import okhttp3.OkHttpClient"))
         assertEquals(listOf("A.kt: style from a URL"), offences("A.kt", "Style.Builder().fromUri(x)"))
         assertEquals(listOf("MapDownload.kt: style from a URL"), offences("MapDownload.kt", "openConnection(); fromUri(x)"))
+        assertEquals(listOf("A.kt: style from a URL"), offences("A.kt", "map.setStyle(\"https://x/style.json\")"))
+        assertEquals(emptyList<String>(), offences("A.kt", "map.setStyle(Style.Builder().fromJson(json))"))
+        assertEquals(listOf("A.kt: URL(", "A.kt: .toURL("), offences("A.kt", "val u = file.toURI().toURL()"))
+        assertEquals(listOf("MapDownload.kt: .toURL("), offences("MapDownload.kt", "uri.toURL()"))
+        assertEquals(listOf("A.kt: OfflineManager"), offences("A.kt", "OfflineManager.getInstance(ctx)"))
+        assertEquals(listOf("MapDownload.kt: OfflineManager"), offences("MapDownload.kt", "import org.maplibre.android.offline.OfflineManager"))
     }
 
     @Test fun onlyMapDownloadMayReachTheNetwork() {

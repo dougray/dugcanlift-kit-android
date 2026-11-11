@@ -13,3 +13,15 @@ enum class RouteMapDecision {
         }
     }
 }
+
+/**
+ * Whether a map on screen must load its style again. A new style (light or
+ * dark) needs it; so does a new store revision with the same style text: a
+ * download finished or an area was deleted, and MapLibre still holds the
+ * tiles it read before -- blank where streets now are, drawn where they are
+ * gone. Loading the style again makes it read the file afresh.
+ */
+internal object StyleReload {
+    fun needed(json: String, lastJson: String?, revision: Int, lastRevision: Int?): Boolean =
+        json != lastJson || revision != lastRevision
+}

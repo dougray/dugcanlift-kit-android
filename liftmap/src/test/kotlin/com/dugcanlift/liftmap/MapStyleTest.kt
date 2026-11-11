@@ -68,3 +68,22 @@ class RouteMapDecisionTest {
         assertEquals(MapBounds(south = 39.74, west = -104.99, north = 39.75, east = -104.98), asked)
     }
 }
+
+class StyleReloadTest {
+    @Test fun sameStyleAndSameRevisionIsNoReload() {
+        assertEquals(false, StyleReload.needed("{a}", "{a}", 3, 3))
+    }
+
+    @Test fun aNewRevisionReloadsTheSameStyle() {
+        // A download finished or an area was deleted: MapLibre's tiles in memory are stale.
+        assertEquals(true, StyleReload.needed("{a}", "{a}", 4, 3))
+    }
+
+    @Test fun aNewStyleReloads() {
+        assertEquals(true, StyleReload.needed("{b}", "{a}", 3, 3))
+    }
+
+    @Test fun theFirstStyleLoads() {
+        assertEquals(true, StyleReload.needed("{a}", null, 0, null))
+    }
+}

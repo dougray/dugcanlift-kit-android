@@ -1,6 +1,8 @@
 package com.dugcanlift.liftmap
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -59,12 +61,12 @@ class MapDownload(
     }
 
     /** One GET, redirects followed by hand so each hop is checked. */
-    private fun fetch(start: URL): Pair<Int, ByteArray> {
+    private suspend fun fetch(start: URL): Pair<Int, ByteArray> {
         var url = allowed(start) ?: throw MapDownloadException.RefusedHost()
         var hops = 0
         while (true) {
             val c = http(url)
-            try {
+            val (status, body, location) = disconnectingOnCancel(c) {
                 c.requestMethod = "GET"
                 c.instanceFollowRedirects = false
                 c.useCaches = false
@@ -72,19 +74,47 @@ class MapDownload(
                 c.readTimeout = TIMEOUT_MS
                 c.setRequestProperty("User-Agent", USER_AGENT)
                 val status = c.responseCode
-                if (status in 300..399) {
-                    val to = c.getHeaderField("Location")?.let { loc -> runCatching { URL(url, loc) }.getOrNull() }
-                    val next = allowed(to)
-                    if (next == null || hops >= MAX_REDIRECTS) return status to ByteArray(0)
-                    url = next
-                    hops++
-                    continue
+                when (status) {
+                    in 300..399 -> Triple(status, ByteArray(0), c.getHeaderField("Location"))
+                    in 200..299 -> Triple(status, c.inputStream.use { it.readBytes() }, null)
+                    else -> Triple(status, ByteArray(0), null)
                 }
-                val body = if (status in 200..299) c.inputStream.use { it.readBytes() } else ByteArray(0)
-                return status to body
+            }
+            if (status in 300..399) {
+                val next = allowed(location?.let { loc -> runCatching { URL(url, loc) }.getOrNull() })
+                if (next == null || hops >= MAX_REDIRECTS) return status to ByteArray(0)
+                url = next
+                hops++
+                continue
+            }
+            return status to body
+        }
+    }
+
+    /**
+     * Runs [blocking] on this thread, and disconnects [c] the moment this
+     * coroutine is cancelled. A connection blocked in a read does not answer
+     * an interrupt; closing its socket is what wakes it, so a Cancel comes back
+     * at once instead of after the read timeout. Disconnects once done, too.
+     */
+    private suspend fun <T> disconnectingOnCancel(c: HttpURLConnection, blocking: () -> T): T = coroutineScope {
+        // UNDISPATCHED: the watcher is waiting before the blocking call begins,
+        // so a cancel that comes at once still reaches it.
+        val watcher = launch(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
+            try {
+                awaitCancellation()
             } finally {
                 c.disconnect()
             }
+        }
+        try {
+            blocking()
+        } catch (e: Exception) {
+            // The socket closed because of the cancel: say so, not "Socket closed".
+            ensureActive()
+            throw e
+        } finally {
+            watcher.cancel()
         }
     }
 
@@ -147,7 +177,7 @@ class MapDownload(
             store.areas().firstOrNull { it.id == id } ?: throw StreetStore.UnknownArea(id)
         }
 
-    private fun fetchTile(tile: TileID, template: String, area: UUID) {
+    private suspend fun fetchTile(tile: TileID, template: String, area: UUID) {
         val text = template.replace("{z}", tile.z.toString())
             .replace("{x}", tile.x.toString())
             .replace("{y}", tile.y.toString())

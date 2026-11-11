@@ -1,6 +1,11 @@
 package com.dugcanlift.liftmap
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -228,5 +233,56 @@ class MapDownloadTest {
         }
         assertTrue(store.areas().isEmpty())
         assertTrue(store.unfinishedAreas().isEmpty())
+    }
+
+    /**
+     * A connection stalled on a dead network: it answers nothing until it is
+     * disconnected, and an interrupt does not wake it (socket reads do not
+     * answer interrupts). Cancel must still come back at once.
+     */
+    private class StalledConnection(url: URL, private val opened: CountDownLatch) : HttpURLConnection(url) {
+        private val gone = CountDownLatch(1)
+        @Volatile var disconnectedAt = false
+        override fun connect() {}
+        override fun usingProxy() = false
+        override fun disconnect() { disconnectedAt = true; gone.countDown() }
+        override fun getResponseCode(): Int {
+            opened.countDown()
+            // Gives up after 8 s (a read timeout), so a download that is never
+            // disconnected fails this test instead of hanging it.
+            val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(8)
+            while (System.nanoTime() < until) {
+                try {
+                    if (gone.await(100, TimeUnit.MILLISECONDS)) throw java.io.IOException("Socket closed")
+                } catch (_: InterruptedException) {
+                    // A blocked socket read ignores an interrupt; so does this.
+                }
+            }
+            throw java.net.SocketTimeoutException("Read timed out")
+        }
+        override fun getInputStream(): InputStream = throw java.io.IOException("Socket closed")
+    }
+
+    @Test fun cancellingAStalledDownloadReturnsAtOnce() = runBlocking<Unit> {
+        val store = makeStore()
+        val stalled = CountDownLatch(MapDownload.MAX_IN_FLIGHT)
+        val made = Collections.synchronizedList(mutableListOf<StalledConnection>())
+        val http: (URL) -> HttpURLConnection = { url ->
+            if (url.path == "/planet") {
+                fake.reset { FakeHttp.Reply(200, tileJson(GOOD)) }
+                fake.open(url)
+            } else {
+                StalledConnection(url, stalled).also { made += it }
+            }
+        }
+        val running = async(Dispatchers.Default) { MapDownload(store, http).download(plan, "X") }
+        assertTrue("every worker should be stalled", stalled.await(10, TimeUnit.SECONDS))
+        val started = System.nanoTime()
+        running.cancelAndJoin()
+        val tookMs = (System.nanoTime() - started) / 1_000_000
+        assertTrue("cancel took $tookMs ms", tookMs < 2_000)
+        assertEquals(MapDownload.MAX_IN_FLIGHT, made.size)
+        assertTrue("every stalled connection is disconnected", made.all { it.disconnectedAt })
+        assertTrue(store.areas().isEmpty())
     }
 }

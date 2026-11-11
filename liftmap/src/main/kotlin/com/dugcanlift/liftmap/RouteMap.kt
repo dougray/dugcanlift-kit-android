@@ -123,7 +123,7 @@ fun RouteMap(
             .background(background)
             .clearAndSetSemantics { contentDescription = "Route" },
     ) {
-        StreetMap(points, style, dark, interactive, Modifier.matchParentSize())
+        StreetMap(points, style, revision, dark, interactive, Modifier.matchParentSize())
         if (!interactive) {
             // Above the map, so the MapView never sees a touch; it consumes
             // nothing, so a tap still reaches the card that holds the map.
@@ -149,14 +149,21 @@ fun RouteMap(
 }
 
 @Composable
-private fun StreetMap(points: List<Pair<Double, Double>>, style: String, dark: Boolean, interactive: Boolean, modifier: Modifier) {
+private fun StreetMap(
+    points: List<Pair<Double, Double>>,
+    style: String,
+    revision: Int,
+    dark: Boolean,
+    interactive: Boolean,
+    modifier: Modifier,
+) {
     val padPx = with(LocalDensity.current) { RouteLayers.EDGE_PADDING_DP.dp.roundToPx() }
     val mapView = rememberMapView(dark)
     val controller = remember(mapView) { RouteMapController(mapView, padPx) }
     AndroidView(
         factory = { mapView },
         modifier = modifier,
-        update = { controller.show(points, style, dark, interactive) },
+        update = { controller.show(points, style, revision, dark, interactive) },
     )
 }
 
@@ -234,6 +241,8 @@ private class RouteMapController(private val view: MapView, private val padPx: I
     private var map: MapLibreMap? = null
     private var loaded: Style? = null
     private var styleJson: String? = null
+    /** The store revision the loaded style read its tiles at. */
+    private var styleRevision: Int? = null
     private var points: List<Pair<Double, Double>> = emptyList()
     private var dark = false
     private var interactive = false
@@ -257,13 +266,15 @@ private class RouteMapController(private val view: MapView, private val padPx: I
 
     /** The style this view should show; null until `show` first runs. */
     private var wanted: String? = null
+    private var wantedRevision = 0
 
-    fun show(points: List<Pair<Double, Double>>, style: String, dark: Boolean, interactive: Boolean) {
+    fun show(points: List<Pair<Double, Double>>, style: String, revision: Int, dark: Boolean, interactive: Boolean) {
         val moved = points != this.points
         this.points = points
         this.dark = dark
         this.interactive = interactive
         wanted = style
+        wantedRevision = revision
         sync(moved)
     }
 
@@ -271,12 +282,16 @@ private class RouteMapController(private val view: MapView, private val padPx: I
         val m = map ?: return
         gestures()
         val json = wanted ?: return
-        if (json != styleJson) {
+        val revision = wantedRevision
+        if (StyleReload.needed(json, styleJson, revision, styleRevision)) {
             styleJson = json
+            styleRevision = revision
             loaded = null
-            // Layers go back on, in the new colors, when the new style loads.
+            // A new store revision loads the same style again, so MapLibre reads
+            // the file afresh: new streets appear, deleted ones go. The route
+            // layers go back on, in the current colors, when the style loads.
             m.setStyle(Style.Builder().fromJson(json)) { s ->
-                if (styleJson != json) return@setStyle
+                if (styleJson != json || styleRevision != revision) return@setStyle
                 loaded = s
                 addRoute(s)
                 fit()
