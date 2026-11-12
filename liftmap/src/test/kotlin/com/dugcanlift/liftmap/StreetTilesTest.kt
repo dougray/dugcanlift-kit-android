@@ -66,11 +66,33 @@ class StreetTilesTest {
 
     /** The Swift kit's numbers for Denver, pinned so the two builds plan the same download. */
     @Test fun denverPlansMatchTheSwiftKit() {
-        val expected = mapOf(10 to (273 to 8_110_000), 25 to (1_125 to 23_790_000), 50 to (4_069 to 79_430_000))
+        val expected = mapOf(10 to (273 to 36_530_000), 25 to (1_125 to 156_730_000), 50 to (4_069 to 568_090_000))
         for ((km, numbers) in expected) {
             val plan = StreetAreaPlan(39.7392, -104.9903, km)
             assertEquals("tiles for $km km", numbers.first, plan.tiles.size)
             assertEquals("bytes for $km km", numbers.second, plan.estimatedBytes)
         }
+    }
+
+    /**
+     * Denver's 10 km plan came to about 30 MB in a real download (the Swift kit's
+     * map/tile-size-sample.json holds the measured tiles); the estimate must not
+     * be low by more than a quarter of that, nor absurdly high.
+     */
+    @Test fun denverTenKmEstimateIsNotLowAgainstTheMeasuredDownload() {
+        val measured = 30_000_000L
+        val estimate = StreetAreaPlan(39.7392, -104.9903, 10).estimatedBytes.toLong()
+        assertTrue("the estimate is low by more than 25%", estimate >= measured * 3 / 4)
+        assertTrue("the estimate is more than 50% high", estimate <= measured * 3 / 2)
+    }
+
+    /** The calibrated per-zoom figures, identical in the Swift and JS kits. */
+    @Test fun typicalBytesIsTheCalibratedTable() {
+        val expected = listOf(
+            85_000, 200_000, 980_000, 400_000, 320_000, 320_000, 200_000, 180_000,
+            150_000, 135_000, 70_000, 100_000, 115_000, 95_000, 155_000,
+        )
+        assertEquals(expected, (0..14).map { StreetTiles.typicalBytes(it) })
+        assertEquals(155_000, StreetTiles.typicalBytes(18))
     }
 }
