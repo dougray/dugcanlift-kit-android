@@ -115,7 +115,7 @@ any one of them to opt out.
 `LiftMapCore` / `LiftMap`: the same names, numbers, SQL schema and on-screen
 words. It draws a run over streets the person downloaded, and nothing else.
 
-- **`StreetTiles` / `StreetAreaPlan`** -- tile maths and what a download
+- **`StreetTiles` / `StreetAreaPlan`** -- tile math and what a download
   covers: a wide layer (zoom 0-10, 100 km) and a detail layer (zoom 11-14,
   10, 25 or 50 km; `forRoute` grows a route's bounds by 2 km).
 - **`StreetStore`** -- every area in one MBTiles file,
@@ -135,6 +135,10 @@ words. It draws a run over streets the person downloaded, and nothing else.
 - **`RouteMap`**, **`MapsCard`**, **`StreetsSheet`** -- the route over the
   streets (or the app's own canvas, passed as `fallback`, when no area covers
   it), the Maps settings card, and the download sheet.
+
+`:liftmap` declares no permissions of its own. Each app declares `INTERNET`
+(for the download) and removes the network-state, Wi-Fi-state and location
+permissions MapLibre's manifest merges in, with `tools:node="remove"`.
 
 **Writes pause maps, by handshake.** Every write to the store goes through
 a writer -- `MapDownload.download` / `resume`, the download sheet, and
@@ -167,9 +171,9 @@ Not yet checked on a device: open a run's map, start an Update from the Maps
 card, and watch for crashes or blank tiles while it runs and after it
 finishes.
 
-`liftmap/src/main/assets/map/` holds dugcanlift-kit's styles and fonts from
-its `map/`, with the matching lines of its `map-files.sha256` (the kit's
-manifest also lists web files this module does not carry). All 256 glyph
+The styles and fonts in `liftmap/src/main/assets/map/` are dugcanlift-kit's
+(its `map/`), with the matching lines of its `map-files.sha256`; the kit's
+manifest also lists web files this module does not carry. All 256 glyph
 ranges ship: the five that hold glyphs, and an empty file for each of the
 rest, because MapLibre never draws a tile still waiting on a range whose file
 is missing. `SharedMapFilesTest` pins the files to those lines, so copy files
@@ -180,29 +184,23 @@ OkHttp outside `MapNetworkGuard.kt`, or a style is loaded from anything but a
 
 ## Coordinates
 
-Through 1.10.0 this repo published one module, and consumers depended on it as
-
-```kotlin
-implementation("com.github.dougray:dugcanlift-kit-android:<tag>")
-```
-
--- the **repository's** name, which is how JitPack serves a single-module
-build whatever the module calls itself (`liftcore`).
-
-From 1.11.0 there are **two** published modules, `liftcore` (pure JVM) and
-`liftmap` (an Android library that brings MapLibre, about 11 MB per ABI).
-JitPack serves a multi-module build per module, as far as is known in the form
+From 1.11.0 this repo publishes **two** modules, `liftcore` (pure JVM) and
+`liftmap` (an Android library that brings MapLibre, about 11 MB per ABI), and
+JitPack serves each under its own coordinate:
 
 ```kotlin
 implementation("com.github.dougray.dugcanlift-kit-android:liftcore:<tag>")
 implementation("com.github.dougray.dugcanlift-kit-android:liftmap:<tag>")
 ```
 
-Confirm the exact coordinates at tag time with a throwaway tag (build it on
-JitPack and resolve both from a consumer) before any app pins them. The
-repo-level coordinate above may now aggregate both modules, which would pull
-MapLibre into anything that depends on it; depend on each module by its own
-coordinate rather than relying on that.
+Both resolve (checked against JitPack's builds of 1.11.0 and 1.11.1, under
+`https://jitpack.io/com/github/dougray/dugcanlift-kit-android/<module>/<tag>/`).
+Apps use this per-module form, and only the modules they need.
+
+The old repo-level coordinate, `com.github.dougray:dugcanlift-kit-android:<tag>`,
+is from 1.11.0 an **aggregate** POM that depends on both modules, so anything
+still using it pulls in `:liftmap` and MapLibre too. Do not use it for 1.11.0
+or later. Up to 1.10.0 it was `liftcore` alone, the only module then.
 
 ## Versioning: pin exact, always
 
@@ -214,12 +212,18 @@ dependency means a consumer's behavior can change on a rebuild with no
 commit in that consumer's own history to point at — exactly the failure
 mode an exact pin exists to rule out.
 
-`liftcore/build.gradle.kts`'s `version` is read from the `KIT_VERSION`
-Gradle property (or environment variable), defaulting to `0.1.0-SNAPSHOT`
-when neither is set — that default is for a local, unpublished build only
-and should never appear in a consumer's dependency line.
+Each module's `version` (`liftcore/build.gradle.kts`,
+`liftmap/build.gradle.kts`) is read from the `KIT_VERSION` Gradle property
+(or environment variable), defaulting to `0.1.0-SNAPSHOT` when neither is
+set — that default is for a local, unpublished build only and should never
+appear in a consumer's dependency line.
 
 ## Cutting a release
+
+A tag is a release. Both modules publish from the one tag, at the same
+version (`jitpack.yml` publishes `:liftcore` and `:liftmap` together, on JDK
+17), and JitPack builds a tag the first time anyone asks for it, not when it
+is pushed.
 
 1. Land the change on `main` and confirm `./gradlew test` is green.
 2. Tag it with the version consumers will pin — semver, no `v` prefix, e.g.:
@@ -234,7 +238,7 @@ and should never appear in a consumer's dependency line.
    rather than assuming the consumer's own config is wrong.
 4. Bump the pin in each consumer (`coach-android/app/build.gradle.kts`,
    `LIFT/android/app/build.gradle.kts`) to the new tag, deliberately, in its
-   own commit.
+   own commit -- every module the consumer uses, to the same tag.
 
 There is no `main`-branch "latest" consumers should ever depend on — a tag
 is the only thing that is safe to pin.
@@ -264,13 +268,17 @@ includeBuild(kitPath) {
 }
 ```
 
-(use whichever coordinates the consumer actually pins -- see Coordinates; a
-consumer still on the repo-level coordinate maps that one to `:liftcore`).
-`:liftmap` is an Android library, so the included build needs the Android
-SDK. Remove the line (or delete the file)
-to go back to building against the pinned tag. This only works if the local
-`dugcanlift-kit-android` checkout is a sibling directory at the path given;
-it does not fetch or clone anything itself.
+Map **both** modules, as LIFT Android's `settings.gradle.kts` does: a
+consumer that substitutes only `liftcore` still resolves `liftmap` from
+JitPack, at whatever version it pins. `:liftmap` is an Android library, so the
+included build needs the Android SDK, and a composite build needs the kit and
+the consumer on the same AGP version: the kit pins AGP 9.4.1 while Coach
+Android's `main` is on 9.5.1, so align them locally before including the kit
+there. The apps' CI never builds this way; it always resolves the JitPack
+coordinates. Remove the line (or delete the file) to go back to building
+against the pinned tag. This only works if the local `dugcanlift-kit-android`
+checkout is a sibling directory at the path given; it does not fetch or clone
+anything itself.
 
 ## Local commands
 
