@@ -4,7 +4,7 @@ json = "20260814"
 junit = "4.13.2"
 # :liftmap. AGP, Compose BOM and lifecycle match LIFT Android's own catalog.
 agp = "9.4.1"
-composeBom = "2026.09.00"
+composeBom = "2026.11.01"
 lifecycleRuntimeCompose = "2.8.7"
 maplibre = "13.7.1"
 # MapLibre's own OkHttp; declared only so MapNetworkGuard can hand MapLibre a client.
