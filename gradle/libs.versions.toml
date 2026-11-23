@@ -3,7 +3,7 @@ kotlin = "2.4.21"
 json = "20260814"
 junit = "4.13.2"
 # :liftmap. AGP, Compose BOM and lifecycle match LIFT Android's own catalog.
-agp = "9.4.1"
+agp = "9.5.2"
 composeBom = "2026.09.00"
 lifecycleRuntimeCompose = "2.8.7"
 maplibre = "13.7.1"
